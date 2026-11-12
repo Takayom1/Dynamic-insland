@@ -91,7 +91,7 @@ public sealed class AssistantVoice : IDisposable
             engine=new SpeechRecognitionEngine(info);
             var words=WakeWords(info.Culture.Name,WakeProfile.SelectedPhrase);
             var grammar=new GrammarBuilder{Culture=info.Culture};grammar.Append(new Choices(words));engine.LoadGrammar(new Grammar(grammar));
-            engine.SpeechRecognized+=(_,e)=>{if(e.Result.Confidence<.65)return;ui.BeginInvoke(()=>{if(token!=generation||!Waiting||busy)return;StopInput();InteractionActive=true;StateChanged?.Invoke();System.Media.SystemSounds.Asterisk.Play();Activated?.Invoke();Report("Слушаю команду…");StartCommand(true);});};
+            engine.SpeechRecognized+=(_,e)=>{if(e.Result.Confidence<.65)return;ui.BeginInvoke(()=>{if(token!=generation||!Waiting||busy)return;StopInput();InteractionActive=true;StateChanged?.Invoke();Activated?.Invoke();Report("Слушаю команду…");StartCommand(true);});};
             engine.RecognizeCompleted+=(_,e)=>ui.BeginInvoke(()=>{if(token!=generation)return;StopInput();if(e.Error!=null)Report("Микрофон: "+e.Error.Message);ArmLater();});
             engine.SetInputToDefaultAudioDevice();Waiting=true;engine.RecognizeAsync(RecognizeMode.Multiple);Report($"Микрофон · жду «{WakeProfile.SelectedPhrase}»");StateChanged?.Invoke();
         }catch(Exception e){StopInput();Report(e.Message);ArmLater(5000);}
@@ -120,7 +120,7 @@ public sealed class AssistantVoice : IDisposable
                         else {var learned=WakeProfile.Learn(calibration);learned.Save(WakeProfile.PathFor(calibrationPhrase));StopInput();CalibrationProgress?.Invoke(3,"Готово — три шаблона сохранены на этом ПК");CalibrationCompleted?.Invoke();ArmLater();}
                     }catch(Exception e){calibration.Clear();CalibrationProgress?.Invoke(0,e.Message+" Начните три повторения снова.");}
                 }else if(profile!=null&&profile.Matches(pcm,out _)){
-                    StopInput();InteractionActive=true;StateChanged?.Invoke();System.Media.SystemSounds.Asterisk.Play();Activated?.Invoke();Report("Слушаю команду…");StartCommand(true);
+                    StopInput();InteractionActive=true;StateChanged?.Invoke();Activated?.Invoke();Report("Слушаю команду…");StartCommand(true);
                 }
             });
             capture=new WaveInEvent{DeviceNumber=AssistantPreferences.Current.MicrophoneDevice,WaveFormat=new WaveFormat(16000,16,1),BufferMilliseconds=100};
@@ -147,7 +147,7 @@ public sealed class AssistantVoice : IDisposable
                 engine.RecognizeCompleted+=(_,e)=>ui.BeginInvoke(()=>{if(token==generation){StopInput();Report(e.Error?.Message??"Микрофон выключен");ArmLater();}});
                 Listening=true;engine.RecognizeAsync(RecognizeMode.Single);
             }
-            limit.Start();Report(fromWake?"Слушаю… После паузы команда отправится в чат":"Диктовка… Текст появится для проверки");StateChanged?.Invoke();
+            limit.Start();if(fromWake)System.Media.SystemSounds.Asterisk.Play();Report(fromWake?"Слушаю… После паузы команда отправится в чат":"Диктовка… Текст появится для проверки");StateChanged?.Invoke();
         }catch(Exception e){StopInput();Report(e.Message);ArmLater();}
     }
     private void Finish(string text,bool fromWake,int token){if(token!=generation||!Listening)return;StopInput();if(fromWake)CommandRecognized?.Invoke(text);else Recognized?.Invoke(text);ArmLater();}
