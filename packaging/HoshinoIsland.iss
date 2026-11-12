@@ -1,4 +1,4 @@
-#define AppVersion "0.15.0"
+#define AppVersion "0.15.1"
 #ifndef SetupOutputName
   #define SetupOutputName "Hoshino-Island-Core-Setup-" + AppVersion
 #endif
