@@ -42,3 +42,7 @@ Based on D-Island by h7 (ibuildrigs) - https://github.com/H7gamer/d-island
 ## Зависимости
 
 Собственные условия библиотек и референсов перечислены в THIRD-PARTY-NOTICES.txt. Условия Windows, Codex и сетевых сервисов остаются отдельными. Исторические документы в репозитории не меняют эту карту лицензий.
+
+Дополнительно MIT: RvcVoice.cs, Assets/Voice/rvc-convert.py, scripts/prepare-speech.py, scripts/build-installer.ps1 и packaging/HoshinoIsland.iss (пути относительно src либо корня проекта по расположению). Веса HoshinoOv2 не включены.
+
+Адаптер Assets/Voice/neural-tts.py — MIT; веса Silero и HoshinoOv2 не входят в эту лицензию и не распространяются с установщиком.

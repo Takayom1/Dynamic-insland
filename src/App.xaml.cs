@@ -50,8 +50,8 @@ public partial class App : Application
 
         _settings = AppSettings.Load();
         HoshinoPalette.Apply(_settings);
-        // This fork must not replace itself with official D-Island releases.
-        Updates = null;
+        // Checks this project only; installer launch requires a user action.
+        Updates = new UpdateService(_settings);
         _window = new MainWindow(_settings);
         _window.SettingsRequested += () => Dispatcher.InvokeAsync(OpenSettings, DispatcherPriority.Background);
         _window.Show();

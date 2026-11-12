@@ -138,6 +138,11 @@ public partial class MainWindow : Window
         };
         _lyricsPanel.CompactChanged += UpdateCompactLyric;
         _aiPanel.TypingRequested += BeginTyping;
+        _aiPanel.VoiceActivated+=OpenAiChat;
+        _aiPanel.VoiceStateChanged+=()=>{if(IsLoaded)UpdatePrivacyIndicators();};
+        PrivacyChip.ToolTip="Нажмите, чтобы выключить ожидание «Хей Хошино»";
+        PrivacyChip.MouseLeftButtonUp+=(_,e)=>{if(_aiPanel.MicrophoneActive)_aiPanel.DisableWake();e.Handled=true;};
+
         _windows = new WindowEventWatcher(TimeSpan.FromMilliseconds(30));
         _background = new BackgroundDetector(GetIslandScreenRect, _windows);
         _windows.Changed += () =>
@@ -619,7 +624,6 @@ public partial class MainWindow : Window
             _settings.Save();
         }
 
-        updates.ReadyToInstall += OnUpdateReady;
         updates.Available += info => ShowInfo(TransientPriority.Device, 320, "", "Update available",
             $"Version {info.Version}", detailBrush: (Brush)FindResource("Green"), seconds: 5);
         updates.Start();
@@ -642,30 +646,6 @@ public partial class MainWindow : Window
     /// A verified update is ready. Install at a quiet moment only: not while a timer, stopwatch or alarm is
     /// running, the island is open, or an alert is showing. The updater asks again every 10 minutes.
     /// </summary>
-    private void OnUpdateReady(UpdateInfo info)
-    {
-        var waitingFor = _timer.IsActive ? "a timer is running"
-            : _stopwatch.IsActive ? "the stopwatch is running"
-            : _alarmSound is not null ? "an alarm is ringing"
-            : _state.IsExpanded || _typing ? "the island is open"
-            : _state.Transient is not null || _animating ? "an alert is showing"
-            : null;
-        if (App.Updates is { } updates && updates.WaitingFor != waitingFor)
-        {
-            updates.WaitingFor = waitingFor;
-#if DEBUG
-            if (Environment.GetEnvironmentVariable("DISLAND_UPDATE_LOG") is { Length: > 0 } log)
-                System.IO.File.AppendAllText(log, $"{DateTime.Now:HH:mm:ss.fff} install {(waitingFor is null ? "now" : "waits: " + waitingFor)}\n");
-#endif
-        }
-        if (waitingFor is not null) return; // asked again in 15 s
-        ShowInfo(TransientPriority.TimerDone, 320, "", "Updating D-Island", $"to {info.Version}",
-            detailBrush: (Brush)FindResource("Green"), seconds: 4);
-        _ = Task.Delay(2500).ContinueWith(_ => App.Updates?.Install(), TaskScheduler.FromCurrentSynchronizationContext());
-    }
-
-    /// <summary>Debug: DISLAND_STARTUP_LOG=&lt;txt&gt; records wall time and this process's CPU time per startup phase.</summary>
-    [Conditional("DEBUG")]
     private static void StartupMark(string phase)
     {
         if (Environment.GetEnvironmentVariable("DISLAND_STARTUP_LOG") is not { Length: > 0 } path) return;
@@ -1472,7 +1452,7 @@ public partial class MainWindow : Window
     private void UpdatePrivacyIndicators()
     {
         var use = _privacy.Current;
-        var active = use.CameraInUse || use.MicrophoneInUse;
+        var active = use.CameraInUse || use.MicrophoneInUse || _aiPanel.MicrophoneActive;
         var brush = use.CameraInUse ? CameraBrush : MicrophoneBrush;
 
         PrivacyDot.Fill = brush;
@@ -1482,7 +1462,7 @@ public partial class MainWindow : Window
         var what = use.CameraInUse && use.MicrophoneInUse ? "Camera & mic"
             : use.CameraInUse ? "Camera"
             : "Mic";
-        PrivacyChipText.Text = $"{what} · {string.Join(", ", use.CameraApps.Concat(use.MicrophoneApps).Distinct())}";
+        PrivacyChipText.Text = _aiPanel.MicrophoneActive ? (_aiPanel.IsListening ? "Хошино · слушаю команду" : "Микрофон · Хей Хошино") : $"{what} · {string.Join(", ", use.CameraApps.Concat(use.MicrophoneApps).Distinct())}";
         ApplyGeometry();
     }
 

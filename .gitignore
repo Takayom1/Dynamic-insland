@@ -28,3 +28,5 @@ src/DIsland.ico
 .env
 .env.*
 publish/
+
+src/Assets/Speech/

@@ -20,6 +20,9 @@ public sealed class AiChatPanel : Grid, IDisposable
     private readonly HoshinoCompanion hero;
     private readonly StackPanel heroPanel = new();
     public bool IsListening => voice.Listening;
+    public bool MicrophoneActive=>voice.MicrophoneActive;
+    public event Action? VoiceActivated;
+    public event Action? VoiceStateChanged;
     private ChatConversation? conversation;
     private ChatMessage? assistantMessage;
     private DateTime lastSave;
@@ -37,6 +40,7 @@ public sealed class AiChatPanel : Grid, IDisposable
     public AiChatPanel(DIsland.Services.AppSettings? appearance = null)
     {
         design = appearance ?? new();
+        AssistantRuntime.Voice=voice;
         head = new HoshinoCompanion(design) { Width = 40, Height = 40, Margin = new Thickness(0,0,12,0), Listening=()=>voice.Listening, Working=()=>busy };
         hero = new HoshinoCompanion(design) { Width=100, Height=100, Listening=()=>voice.Listening, Working=()=>busy };
         heroPanel.Children.Add(hero);
@@ -73,7 +77,7 @@ public sealed class AiChatPanel : Grid, IDisposable
         stop = MakeButton("Стоп ■", "Остановить ответ"); stop.Visibility = Visibility.Collapsed; stop.Click += async (_, _) => await Interrupt();
         var right = new WrapPanel { Orientation = Orientation.Horizontal, MaxWidth = 310 };
         var microphone = MakeButton("Микрофон", "Диктовка: нажмите, говорите, затем проверьте текст"); microphone.Click += (_, _) => { try { if (busy) return; voice.Listen(); } catch (Exception e) { status.Text = e.Message; } }; right.Children.Add(microphone);
-        var silence = MakeButton("Без звука", "Остановить озвучивание"); silence.Click += (_, _) => voice.Silence(); right.Children.Add(silence); right.Children.Add(stop); right.Children.Add(send); DockPanel.SetDock(right, Dock.Right); actions.Children.Add(right);
+        var silence = MakeButton("Без звука", "Остановить озвучивание"); silence.Click += (_, _) => {voice.Silence();status.Text="Озвучивание остановлено";}; right.Children.Add(silence); right.Children.Add(stop); right.Children.Add(send); DockPanel.SetDock(right, Dock.Right); actions.Children.Add(right);
         actions.Children.Add(new TextBlock { Text = "Enter ↵", FontSize = 10, Opacity = .45, VerticalAlignment = VerticalAlignment.Center });
         body.Children.Add(actions); composer.Child = body; SetRow(composer, 2); Children.Add(composer);
         var footer = new TextBlock { Text = "Локальная история · доступ и голос в настройках", FontSize = 10, Opacity = .45, Margin = new Thickness(2, 8, 0, 0) }; SetRow(footer, 3); Children.Add(footer);
@@ -82,6 +86,14 @@ public sealed class AiChatPanel : Grid, IDisposable
         bridge.Request += ApprovalDialog.Handle;
         voice.Recognized += text => Dispatcher.InvokeAsync(() => { Input.Text = text; status.Text = "Диктовка готова — проверьте текст и отправьте"; });
         voice.Status += text => Dispatcher.InvokeAsync(() => status.Text = text);
+        voice.Activated+=()=>VoiceActivated?.Invoke();
+        voice.StateChanged+=()=>VoiceStateChanged?.Invoke();
+        voice.CommandRecognized+=async text=> {
+            if(busy)return;
+            if(!string.IsNullOrWhiteSpace(Input.Text)){Input.Text+="\n"+text;status.Text="Диктовка добавлена к черновику — отправьте вручную";return;}
+            Input.Text=text;await Send();
+        };
+        Dispatcher.BeginInvoke(()=>voice.Configure());
         AssistantPreferences.Changed += PreferencesChanged;
         ObsidianPreferences.Changed += PreferencesChanged;
         AssistantRuntime.AccountChanged += AccountChanged;
@@ -96,7 +108,7 @@ public sealed class AiChatPanel : Grid, IDisposable
         scroll?.ScrollToEnd(); return label;
     }
 
-    private void SetBusy(bool value) { busy = value; AssistantRuntime.Busy = value; if (!value) { AssistantRuntime.ActiveThread = null; AssistantRuntime.ActiveTurn = null; } send.IsEnabled = !value; stop.Visibility = value ? Visibility.Visible : Visibility.Collapsed; stop.IsEnabled = value; }
+    private void SetBusy(bool value) { busy = value; voice.PauseForBusy(value); AssistantRuntime.Busy = value; if (!value) { AssistantRuntime.ActiveThread = null; AssistantRuntime.ActiveTurn = null; } send.IsEnabled = !value; stop.Visibility = value ? Visibility.Visible : Visibility.Collapsed; stop.IsEnabled = value; }
     private Task Connect() => bridge.Start();
     private async Task Send()
     {
@@ -179,7 +191,7 @@ public sealed class AiChatPanel : Grid, IDisposable
         voice.Stop(); voice.Silence(); SaveConversation(); thread = null; conversation = null; assistantMessage = null; response = null;
         messages.Children.Clear(); messages.Children.Add(heroPanel); ApplyDesign();
     }
-    private void PreferencesChanged() => Dispatcher.InvokeAsync(() => { if (!busy) ResetConversation(); });
+    private void PreferencesChanged() => Dispatcher.InvokeAsync(() => { if (!busy) ResetConversation(); voice.Configure(); });
     private void AccountChanged() => Dispatcher.InvokeAsync(() => { voice.Stop(); voice.Silence(); thread = null; conversation = null; assistantMessage = null; response = null; messages.Children.Clear(); Bubble("Аккаунт изменён. Начните новый диалог или выберите историю.", false); });
     private async Task ShowHistory()
     {
@@ -208,10 +220,12 @@ public sealed class AiChatPanel : Grid, IDisposable
         }
         catch (Exception e) { status.Text = e.Message; }
     }
-    public void StopListening() => voice.Stop();
+    public void StopListening() {voice.Stop();}
+    public void DisableWake() {AssistantPreferences.Current.WakeEnabled=false;AssistantPreferences.Current.Save(false);voice.Configure();}
+
     public void Dispose()
     {
-        SaveConversation(); voice.Dispose(); bridge.Event -= OnEvent; bridge.Request -= ApprovalDialog.Handle;
+        SaveConversation(); if(ReferenceEquals(AssistantRuntime.Voice,voice))AssistantRuntime.Voice=null; voice.Dispose(); bridge.Event -= OnEvent; bridge.Request -= ApprovalDialog.Handle;
         ObsidianPreferences.Changed -= PreferencesChanged;
         AssistantPreferences.Changed -= PreferencesChanged; AssistantRuntime.AccountChanged -= AccountChanged; bridge.Dispose();
     }

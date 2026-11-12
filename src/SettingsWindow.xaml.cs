@@ -278,7 +278,8 @@ public partial class SettingsWindow : Window
         system.Children.Add(startup);
 
         var updates = Section("UPDATES");
-        Note(updates, "Hoshino Island развивается как проект Takayom1. Автоматическое обновление из D-Island отключено. Ссылки автора — в разделе «О программе».");
+        Check(updates,"Проверять обновления ежедневно",()=>s.CheckForUpdates,v=>s.CheckForUpdates=v);
+        UpdateControls(updates);
 
         var about = Section("ABOUT");
         var aboutHero = new DockPanel { Margin=new Thickness(0,0,0,20) };
@@ -365,11 +366,11 @@ public partial class SettingsWindow : Window
     private void UpdateControls(Panel panel)
     {
         var status = new TextBlock { Foreground = Secondary, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 6) };
-        var check = new Button { Style = (Style)FindResource("ChipButton"), Content = "Check for updates", Margin = new Thickness(0, 0, 8, 0) };
-        var install = new Button { Style = (Style)FindResource("ChipButton"), Content = "Install now", Margin = new Thickness(0, 0, 8, 0) };
-        var open = new Button { Style = (Style)FindResource("ChipButton"), Content = "Release notes", Margin = new Thickness(0, 0, 8, 0) };
+        var check = new Button { Style = (Style)FindResource("ChipButton"), Content = "Проверить и скачать обновление", Margin = new Thickness(0, 0, 8, 0) };
+        var install = new Button { Style = (Style)FindResource("ChipButton"), Content = "Установить", Margin = new Thickness(0, 0, 8, 0) };
+        var open = new Button { Style = (Style)FindResource("ChipButton"), Content = "Страница выпуска", Margin = new Thickness(0, 0, 8, 0) };
         var whatsNew = new Button { Style = (Style)FindResource("ChipButton"), Content = "What's new", Margin = new Thickness(0) };
-        whatsNew.Click += (_, _) => (Application.Current as App)?.ShowWhatsNew(null);
+        whatsNew.Visibility=Visibility.Collapsed;
         var row = new WrapPanel { Margin = new Thickness(0, 0, 0, 4), Children = { check, install, open, whatsNew } };
         panel.Children.Add(status);
         panel.Children.Add(row);
@@ -382,15 +383,11 @@ public partial class SettingsWindow : Window
             {
                 UpdateState.Checking => $"{current} Checking…",
                 UpdateState.UpToDate => $"{current} It's the latest.",
-                UpdateState.Available when !UpdateService.IsInstalled =>
-                    $"{current} Version {u.Latest?.Version} is available. This copy wasn't installed with the setup program, so download it from GitHub.",
+                
                 UpdateState.Available => $"{current} Version {u.Latest?.Version} is available.",
                 UpdateState.Downloading => $"{current} Downloading version {u.Latest?.Version}…",
-                UpdateState.ReadyToInstall when !_settings.AutoInstallUpdates =>
+                UpdateState.ReadyToInstall =>
                     $"{current} Version {u.Latest?.Version} is downloaded and verified. Click Install now.",
-                UpdateState.ReadyToInstall => u.WaitingFor is { } reason
-                    ? $"{current} Version {u.Latest?.Version} is downloaded and verified. It installs as soon as nothing is in the way (now: {reason})."
-                    : $"{current} Version {u.Latest?.Version} is downloaded and verified, and installs in a moment.",
                 UpdateState.Installing => $"Installing version {u.Latest?.Version}…",
                 UpdateState.Failed => $"{current} Update check failed: {u.Error}.",
                 _ => _settings.LastUpdateCheck is { } last ? $"{current} Last checked {last.ToLocalTime():g}." : current,
@@ -404,7 +401,7 @@ public partial class SettingsWindow : Window
         {
             if (App.Updates is { } u) await u.CheckAsync(manual: true);
         };
-        install.Click += (_, _) => App.Updates?.Install();
+        install.Click += (_, _) => {try {App.Updates?.Install();}catch(Exception e){MessageBox.Show(e.Message,"Обновление");}};
         open.Click += (_, _) =>
         {
             var url = App.Updates?.Latest?.PageUrl ?? $"https://github.com/{UpdateService.Repository}/releases";

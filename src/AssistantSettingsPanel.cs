@@ -14,6 +14,14 @@ public sealed class AssistantSettingsPanel : StackPanel
     private readonly ComboBox access = new() { MinHeight = 32, DisplayMemberPath = "Label", SelectedValuePath = "Id" };
     private readonly ComboBox culture = new() { MinHeight = 32, IsEditable = true };
     private readonly TextBox work = new(), vault = new(), executable = new(), instructions = new();
+    private readonly CheckBox neural=new(){Content="Нейросетевая русская речь вместо голоса Windows"};
+    private readonly TextBox neuralModel=new();
+    private readonly ComboBox neuralSpeaker=new();
+    private readonly CheckBox rvc=new(){Content="Преобразовывать речь через локальный RVC"};
+    private readonly TextBox rvcPython=new(),rvcEngine=new(),rvcModel=new(),rvcIndex=new();
+    private readonly CheckBox wake=new(){Content="Ждать «Хей Хошино» — микрофон включён постоянно"};
+    private readonly ComboBox voices=new(){MinHeight=32};
+    private readonly Slider rate=new(){Minimum=-5,Maximum=5,TickFrequency=1,IsSnapToTickEnabled=true};
     private readonly CheckBox speech = new() { Content = "Озвучивать готовый ответ голосом Windows", Foreground = Brushes.White };
     public record Choice(string Id, string Label) { public override string ToString() => Label; }
     public AssistantSettingsPanel()
@@ -37,14 +45,32 @@ public sealed class AssistantSettingsPanel : StackPanel
         Label("Голос"); culture.Text = prefs.RecognitionCulture; Children.Add(culture); RefreshCultures(); culture.Text = prefs.RecognitionCulture;
         var refreshVoice = new WrapPanel(); Children.Add(refreshVoice); Button(refreshVoice, "Обновить распознаватели", () => { RefreshCultures(); feedback.Text = "Список речевых компонентов обновлён"; return Task.CompletedTask; });
         speech.IsChecked = prefs.SpeakReplies; Children.Add(speech);
-        Text("Микрофон включается только по кнопке в чате, максимум на 30 секунд. Диктовка сначала появляется в поле ввода: проверьте её и отправьте. Распознавание и озвучка — средствами Windows, без полного голосового режима ChatGPT.");
+        wake.IsChecked=prefs.WakeEnabled;wake.Checked+=(_,_)=>speech.IsChecked=true;Children.Add(wake);
+        Text("После активации дождитесь надписи «Слушаю» и произнесите команду отдельно. Она отправится после паузы. Ожидание приостанавливается во время ответа и озвучивания; опасные действия подтверждаются кнопкой. Скрытие приложения не выключает ожидание фразы. Нажмите индикатор микрофона на раскрытом острове или отключите эту настройку, чтобы остановить ожидание.");
+        voices.ItemsSource=AssistantVoice.Voices();voices.SelectedItem=prefs.VoiceName;if(voices.SelectedIndex<0)voices.SelectedItem=AssistantVoice.Voices().FirstOrDefault(n=>n.Contains("Irina"))??AssistantVoice.Voices().FirstOrDefault();Children.Add(voices);
+        Text("Скорость голоса · медленнее ← → быстрее");rate.Value=prefs.VoiceRate;Children.Add(rate);
+        var preview=new WrapPanel();Children.Add(preview);
+        Button(preview,"Проба голоса Windows",()=>{var speaker=new System.Speech.Synthesis.SpeechSynthesizer();if(voices.SelectedItem is string name)speaker.SelectVoice(name);speaker.Rate=(int)rate.Value;speaker.SpeakCompleted+=(_,_)=>speaker.Dispose();speaker.SetOutputToDefaultAudioDevice();speaker.SpeakAsync("Я здесь. Что у нас случилось?");return Task.CompletedTask;});
+        Text("Обычная диктовка по кнопке остаётся ручной: текст можно проверить перед отправкой. Русские команды обрабатываются локально Vosk, модель включена в установщик. Это выбранный голос Windows, не копия актрисы Хошино.");
+        neural.IsChecked=prefs.NeuralEnabled;Children.Add(neural);
+        Text("Локальный Silero v5_5_ru. Нужен Python с torch и soundfile. Веса не входят в установщик и имеют отдельную некоммерческую лицензию. Без RVC этот режим даёт естественный русский голос; RVC добавляет тембр, но увеличивает задержку.");
+        Text("Модель Silero v5_5_ru.pt · полный путь");neuralModel.Text=prefs.NeuralModel;Children.Add(neuralModel);
+        neuralSpeaker.ItemsSource=new[]{"baya","kseniya","xenia","eugene","aidar"};neuralSpeaker.SelectedItem=prefs.NeuralSpeaker;Children.Add(neuralSpeaker);
+        rvc.IsChecked=prefs.RvcEnabled;Children.Add(rvc);
+        Text("Дополнительно: RVC меняет тембр русской озвучки. Нужен доверенный Applio с его Python и ваша модель. На CPU возможна задержка. Веса персонажа не включены в установщик; проверяйте права на использование и распространение. Выполняется выбранный локальный Python-движок.");
+        Text("Python нейроголоса / Applio · полный путь к python.exe");rvcPython.Text=prefs.RvcPython;Children.Add(rvcPython);
+        Folder("Папка движка Applio",rvcEngine,prefs.RvcEngine);
+        Text("Модель .pth · полный путь");rvcModel.Text=prefs.RvcModel;Children.Add(rvcModel);
+        Text("Индекс .index · полный путь");rvcIndex.Text=prefs.RvcIndex;Children.Add(rvcIndex);
+        var neuralPreview=new WrapPanel();Children.Add(neuralPreview);
+        Button(neuralPreview,"Проба сохранённого нейроголоса",()=>{if(AssistantRuntime.Busy)throw new InvalidOperationException("Дождитесь ответа Codex");if(!AssistantPreferences.Current.SpeakReplies)throw new InvalidOperationException("Включите озвучку и сохраните настройки");AssistantRuntime.Voice?.Speak("Ух... Ты уже вернулся? Ладно, показывай, что у нас случилось.");feedback.Text="Озвучивание запущено. RVC может занять время; остановка — «Без звука» в чате.";return Task.CompletedTask;});
         Label("Поведение помощника"); instructions.Text = prefs.Instructions; instructions.AcceptsReturn = true; instructions.TextWrapping = TextWrapping.Wrap; instructions.Height = 190; instructions.VerticalScrollBarVisibility = ScrollBarVisibility.Auto; Children.Add(instructions);
         Label("Codex CLI"); executable.Text = prefs.CodexExecutable; Children.Add(executable); Text("Оставьте пустым для автоматического поиска. Либо полный путь к официальному codex.exe. На компьютере друга CLI устанавливается отдельно.");
         var save = new WrapPanel { Margin = new Thickness(0, 16, 0, 0) }; Children.Add(save);
         Button(save, "Сохранить настройки", () =>
         {
             if (AssistantRuntime.Busy) throw new InvalidOperationException("Сначала остановите ответ");
-            var settings = new AssistantPreferences { Model = model.SelectedValue?.ToString() ?? prefs.Model, AccessMode = access.SelectedValue?.ToString() ?? "workspace-write", WorkingDirectory = work.Text.Trim(), Vault = vault.Text.Trim(), CodexExecutable = executable.Text.Trim(), RecognitionCulture = culture.Text.Trim(), SpeakReplies = speech.IsChecked == true, Instructions = instructions.Text };
+            var settings = new AssistantPreferences { Model = model.SelectedValue?.ToString() ?? prefs.Model, AccessMode = access.SelectedValue?.ToString() ?? "workspace-write", WorkingDirectory = work.Text.Trim(), Vault = vault.Text.Trim(), CodexExecutable = executable.Text.Trim(), RecognitionCulture = culture.Text.Trim(), SpeakReplies = speech.IsChecked == true, WakeEnabled=wake.IsChecked==true, VoiceName=voices.SelectedItem?.ToString()??"",VoiceRate=(int)rate.Value, NeuralEnabled=neural.IsChecked==true,NeuralModel=neuralModel.Text.Trim(),NeuralSpeaker=neuralSpeaker.SelectedItem?.ToString()??"baya",RvcEnabled=rvc.IsChecked==true,RvcPython=rvcPython.Text.Trim(),RvcEngine=rvcEngine.Text.Trim(),RvcModel=rvcModel.Text.Trim(),RvcIndex=rvcIndex.Text.Trim(), Instructions = instructions.Text };
             settings.Save(); AssistantRuntime.Bridge.Restart(); feedback.Text = "Сохранено. Следующее сообщение начнёт новый диалог с этими параметрами."; return Task.CompletedTask;
         });
         Children.Add(feedback);

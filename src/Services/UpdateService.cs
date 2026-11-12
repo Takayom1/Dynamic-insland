@@ -1,4 +1,4 @@
-﻿// D-Island - Copyright 2026 h7 (ibuildrigs) and contributors.
+// D-Island - Copyright 2026 h7 (ibuildrigs) and contributors.
 // Licensed under the D-Island License 1.0; see LICENSE.txt and NOTICE.txt.
 
 using System.Diagnostics;
@@ -27,28 +27,19 @@ public enum UpdateState
 
 public sealed record UpdateInfo(Version Version, string Tag, string PageUrl, string InstallerUrl, string InstallerName, string ChecksumUrl);
 
-/// <summary>
-/// Updates from the official GitHub releases only (https://github.com/H7gamer/d-island).
-/// <list type="bullet">
-/// <item>Checks the public "latest release" API a minute after start and then once a day (no account,
-/// no token; GitHub sees only the IP address and the "D-Island/version" user agent).</item>
-/// <item>A release is used only if it has the installer and its ".sha256" file as assets of that
-/// release, both served from github.com/H7gamer/d-island. The download is verified against the
-/// checksum before anything runs.</item>
-/// <item>Installed copies (the installer's uninstaller sits next to the exe) update themselves
-/// silently; the installer restarts the island. Development builds only report the update.</item>
-/// </list>
-/// </summary>
+/// <summary>Checks Takayom1 releases. Only an explicit manual check downloads;
+/// only the Install button and confirmation launch the verified installer.</summary>
 public sealed class UpdateService
 {
-    public const string Repository = "H7gamer/d-island";
+    public const string Repository = "Takayom1/Dynamic-insland";
 
     // Must stay above Http: static fields initialise in declaration order, and the client's user agent
     // needs the version (in the other order it was null, the user agent invalid, and the type unusable).
     public static Version CurrentVersion { get; } =
         typeof(UpdateService).Assembly.GetName().Version is { } v ? new Version(v.Major, v.Minor, Math.Max(0, v.Build)) : new Version(0, 0, 0);
 
-    private static readonly Regex InstallerName = new(@"^D-Island-Setup-(\d+\.\d+\.\d+)\.exe$", RegexOptions.IgnoreCase);
+    private static readonly Regex InstallerName = new(@"^Hoshino-Island-Setup-(\d+\.\d+\.\d+)\.exe$", RegexOptions.IgnoreCase);
+    private string? downloadedHash;
     private static readonly HttpClient Http = CreateClient();
 
     private readonly AppSettings _settings;
@@ -148,7 +139,7 @@ public sealed class UpdateService
                 return;
             }
 
-            if (!IsInstalled || !(_settings.AutoInstallUpdates || manual))
+            if (!manual)
             {
                 SetState(UpdateState.Available);
                 Available?.Invoke(info);
@@ -157,6 +148,7 @@ public sealed class UpdateService
 
             SetState(UpdateState.Downloading);
             DownloadedInstaller = await DownloadVerifiedAsync(info);
+            downloadedHash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(DownloadedInstaller)));
             SetState(UpdateState.ReadyToInstall);
             ReadyToInstall?.Invoke(info);
         }
@@ -176,13 +168,16 @@ public sealed class UpdateService
         }
     }
 
-    /// <summary>Starts the verified installer silently and ends this process; the installer restarts D-Island.</summary>
+    /// <summary>Rechecks integrity and opens the installer after confirmation.</summary>
     public void Install()
     {
         if (State != UpdateState.ReadyToInstall || DownloadedInstaller is not { } installer || !File.Exists(installer)) return;
+        if (!Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(installer))).Equals(downloadedHash, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("Установщик изменился после проверки");
+        if (System.Windows.MessageBox.Show("Запустить установщик Hoshino Island? Остров будет закрыт, личные данные сохранятся.", "Обновление", System.Windows.MessageBoxButton.YesNo) != System.Windows.MessageBoxResult.Yes) return;
         SetState(UpdateState.Installing);
         // !identity: the notification setup stays registered across updates (same folder), so don't run it again.
-        const string arguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /MERGETASKS=\"!identity\"";
+        const string arguments = "/CURRENTUSER /NORESTART";
 #if DEBUG
         if (Environment.GetEnvironmentVariable("DISLAND_UPDATE_DRYRUN") is { Length: > 0 } dryRun)
         {
@@ -232,7 +227,7 @@ public sealed class UpdateService
             var name = asset.GetProperty("name").GetString() ?? "";
             var url = asset.GetProperty("browser_download_url").GetString() ?? "";
             if (!IsOfficialDownload(url)) continue;
-            if (InstallerName.IsMatch(name))
+            if (InstallerName.Match(name) is { Success:true } match && Version.TryParse(match.Groups[1].Value,out var assetVersion) && assetVersion==version)
             {
                 installerName = name;
                 installerUrl = url;
@@ -309,7 +304,7 @@ public sealed class UpdateService
     private static HttpClient CreateClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd($"D-Island/{CurrentVersion}");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd($"Hoshino-Island/{CurrentVersion}");
         return client;
     }
 

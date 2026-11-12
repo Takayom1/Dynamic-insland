@@ -17,6 +17,17 @@ public sealed class AssistantPreferences
     public string CodexExecutable { get; set; } = "";
     public string RecognitionCulture { get; set; } = "ru-RU";
     public bool SpeakReplies { get; set; }
+    public bool WakeEnabled {get;set;}
+    public string VoiceName {get;set;} = "";
+    public int VoiceRate {get;set;} = -1;
+    public bool NeuralEnabled {get;set;}
+    public string NeuralModel {get;set;}="";
+    public string NeuralSpeaker {get;set;}="baya";
+    public bool RvcEnabled {get;set;}
+    public string RvcPython {get;set;}="";
+    public string RvcEngine {get;set;}="";
+    public string RvcModel {get;set;}="";
+    public string RvcIndex {get;set;}="";
     public string Instructions { get; set; } = DefaultInstructions;
     public const string PersonaInstructions = """
 [HOSHINO_ROLE_V1]
@@ -48,19 +59,20 @@ public sealed class AssistantPreferences
         }
         catch (Exception e) when (e is IOException or JsonException) { return new(); }
     }
-    public void Save()
+    public void Save(bool notify = true)
     {
         if (!Directory.Exists(WorkingDirectory)) throw new IOException("Рабочая папка не существует");
         if (Vault.Length > 0 && !Directory.Exists(Vault)) throw new IOException("Vault не существует");
         if (!new[] { "read-only", "workspace-write", "danger-full-access" }.Contains(AccessMode)) throw new IOException("Неизвестный режим доступа");
         Directory.CreateDirectory(DataDirectory);
         var path = Path.Combine(DataDirectory, "assistant.json"); File.WriteAllText(path + ".tmp", JsonSerializer.Serialize(this)); File.Move(path + ".tmp", path, true);
-        Current = this; Changed?.Invoke();
+        Current = this; if(notify)Changed?.Invoke();
     }
 }
 public static class AssistantRuntime
 {
     public static CodexBridge Bridge { get; } = new();
+    public static AssistantVoice? Voice {get;set;}
     public static bool Busy { get; set; }
     public static string? ActiveThread { get; set; }
     public static string? ActiveTurn { get; set; }

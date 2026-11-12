@@ -111,3 +111,10 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+Hoshino Island 0.13 voice components:
+NAudio 2.2.1, Copyright Mark Heath and contributors, MIT: see NAudio-LICENSE.txt. https://github.com/naudio/NAudio
+Vosk 0.3.38, Apache-2.0: see Vosk-LICENSE.txt. https://github.com/alphacep/vosk-api
+Vosk small Russian model 0.22, Apache-2.0: see Speech-Model-LICENSE.txt and Assets/Speech/vosk-model-small-ru-0.22/README. https://alphacephei.com/vosk/models
+Optional Applio engine is installed separately, MIT, Copyright AI Hispano; it is not bundled. https://github.com/IAHispano/Applio
+User-selected HoshinoOv2 weights and index are not bundled or licensed by this project.
