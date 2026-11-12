@@ -32,3 +32,5 @@ publish/
 src/Assets/Speech/
 
 **/wake-profile.json
+installer/bin/
+installer/obj/

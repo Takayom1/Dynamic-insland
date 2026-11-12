@@ -58,8 +58,8 @@ NodaTime is distributed unmodified.
 
 ----------------------------------------------------------------------------------------------------
 Installer
-The D-Island installer is built with Inno Setup (c) Jordan Russell and Martijn Laan,
-https://jrsoftware.org/isinfo.php, used under the Inno Setup licence.
+The Hoshino Island installer uses Inno Setup (c) Jordan Russell and Martijn Laan,
+https://jrsoftware.org/isinfo.php, used under the Inno Setup licence (see Inno-Setup-LICENSE.txt).
 
 Online services used at run time (weather by Open-Meteo, https://open-meteo.com, CC BY 4.0 data;
 Apple and calendar providers) are described in PRIVACY.txt.

@@ -1,4 +1,7 @@
-#define AppVersion "0.14.1"
+#define AppVersion "0.15.0"
+#ifndef SetupOutputName
+  #define SetupOutputName "Hoshino-Island-Core-Setup-" + AppVersion
+#endif
 #ifndef AppSource
   #define AppSource "..\publish"
 #endif
@@ -16,7 +19,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\outputs
-OutputBaseFilename=Hoshino-Island-Setup-{#AppVersion}
+OutputBaseFilename={#SetupOutputName}
 SetupIconFile=..\src\GlassDesk.ico
 UninstallDisplayIcon={app}\DIsland.exe
 Compression=lzma2/fast

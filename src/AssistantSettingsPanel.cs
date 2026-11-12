@@ -72,7 +72,11 @@ public sealed class AssistantSettingsPanel : StackPanel
         Text("Модель .pth · полный путь");rvcModel.Text=prefs.RvcModel;Children.Add(rvcModel);
         Text("Индекс .index · полный путь");rvcIndex.Text=prefs.RvcIndex;Children.Add(rvcIndex);
         var neuralPreview=new WrapPanel();Children.Add(neuralPreview);
-        Button(neuralPreview,"Проба сохранённого нейроголоса",()=>{if(AssistantRuntime.Busy)throw new InvalidOperationException("Дождитесь ответа Codex");if(!AssistantPreferences.Current.SpeakReplies)throw new InvalidOperationException("Включите озвучку и сохраните настройки");AssistantRuntime.Voice?.Speak("Ух... Ты уже вернулся? Ладно, показывай, что у нас случилось.");feedback.Text="Озвучивание запущено. RVC может занять время; остановка — «Без звука» в чате.";return Task.CompletedTask;});
+        Button(neuralPreview,"Проба сохранённого нейроголоса",async()=>{if(AssistantRuntime.Busy)throw new InvalidOperationException("Дождитесь ответа Codex");if(!AssistantPreferences.Current.SpeakReplies)throw new InvalidOperationException("Включите озвучку и сохраните настройки");if(AssistantRuntime.Voice is { } voice)await voice.Preview("Я здесь. Слушаю тебя.");});
+        Button(neuralPreview,"Остановить голос",()=>{AssistantRuntime.Voice?.Silence();return Task.CompletedTask;});
+        var neuralState=new TextBlock{Text=liveVoice?.CurrentStatus??"Голос не запущен",TextWrapping=TextWrapping.Wrap,Foreground=Brushes.LightSkyBlue};Children.Add(neuralState);
+        Action<string> neuralStatus=text=>neuralState.Text=text;if(liveVoice!=null){liveVoice.Status+=neuralStatus;Unloaded+=(_,_)=>liveVoice.Status-=neuralStatus;}
+        Text("После включения озвучки модели прогреваются один раз и остаются в памяти до отключения озвучки или закрытия острова. Повторные реплики используют тот же процесс. Совместимый Python с CUDA включает GPU для RVC автоматически.");
         Label("Поведение помощника"); instructions.Text = prefs.Instructions; instructions.AcceptsReturn = true; instructions.TextWrapping = TextWrapping.Wrap; instructions.Height = 190; instructions.VerticalScrollBarVisibility = ScrollBarVisibility.Auto; Children.Add(instructions);
         Label("Codex CLI"); executable.Text = prefs.CodexExecutable; Children.Add(executable); Text("Оставьте пустым для автоматического поиска. Либо полный путь к официальному codex.exe. На компьютере друга CLI устанавливается отдельно.");
         var save = new WrapPanel { Margin = new Thickness(0, 16, 0, 0) }; Children.Add(save);

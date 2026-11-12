@@ -17,6 +17,7 @@ Telegram: https://t.me/takayom1
 - AssistantSettingsPanel.cs
 - AssistantTheme.cs
 - AssistantVoice.cs
+- LocalVoiceWorker.cs
 - WakeProfile.cs
 - WakeCalibrationWindow.cs
 - CodexBridge.cs
@@ -48,3 +49,5 @@ Based on D-Island by h7 (ibuildrigs) - https://github.com/H7gamer/d-island
 Дополнительно MIT: RvcVoice.cs, Assets/Voice/rvc-convert.py, scripts/prepare-speech.py, scripts/build-installer.ps1 и packaging/HoshinoIsland.iss (пути относительно src либо корня проекта по расположению). Веса HoshinoOv2 не включены.
 
 Адаптер Assets/Voice/neural-tts.py — MIT; веса Silero и HoshinoOv2 не входят в эту лицензию и не распространяются с установщиком.
+
+Код installer/ (собственное окно установщика) и Assets/Voice/voice-worker.py — MIT. Векторный образ персонажа сохраняет исключения для графики, описанные выше. Inno Setup и .NET сохраняют собственные условия; они не перелицензируются этим документом. Веса нейромоделей не включены.

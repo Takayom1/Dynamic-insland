@@ -25,6 +25,7 @@ public sealed class AssistantVoice : IDisposable
     private int speechVersion;
     private bool sessionPaused;
     private readonly List<float[][]> calibration=new();
+    private readonly LocalVoiceWorker worker=new();
     public bool Calibrating {get;private set;}
     public bool InteractionActive {get;private set;}
     public bool IsSpeaking=>player!=null||speaker?.State==SynthesizerState.Speaking;
@@ -57,7 +58,14 @@ public sealed class AssistantVoice : IDisposable
         limit.Tick+=(_,_)=>{limit.Stop();var wasCalibration=Calibrating;StopInput();Report(wasCalibration?"Не услышал три повторения. Проверьте микрофон и начните снова.":"Команда не услышана. Повторите «Хей Хошино».");ArmLater();};
         rearm.Tick+=(_,_)=>{rearm.Stop();if(!busy&&!speaking&&!Listening&&InteractionActive){InteractionActive=false;StateChanged?.Invoke();}TryWake();};
     }
-    public void Configure(){InteractionActive=false;StopInput();Silence();Report(AssistantPreferences.Current.WakeEnabled?"Запускаю ожидание «Хей Хошино»…":"Ожидание «Хей Хошино» выключено");ArmLater();}
+    public void Configure(){InteractionActive=false;StopInput();Silence();Report(AssistantPreferences.Current.WakeEnabled?"Запускаю ожидание «Хей Хошино»…":"Ожидание «Хей Хошино» выключено");ArmLater();var p=AssistantPreferences.Current;if(p.SpeakReplies&&(p.NeuralEnabled||p.RvcEnabled))_=WarmVoice();else worker.Reset();}
+    private async Task WarmVoice()
+    {
+        using var timeout=new CancellationTokenSource(TimeSpan.FromMinutes(3));
+        try{await worker.Prepare(text=>{if(!speaking&&!disposed)Report("Прогрев · "+text);},timeout.Token);if(!speaking&&!disposed)Report("Нейроголос готов · "+(worker.Device.StartsWith("cuda")?"GPU":"CPU"));}
+        catch(Exception e){if(!speaking&&!disposed)Report("Прогрев голоса: "+(e is OperationCanceledException?"истекло время ожидания":e.Message));}
+    }
+    public Task Preview(string text){if(AssistantPreferences.Current.NeuralEnabled||AssistantPreferences.Current.RvcEnabled)return SpeakConverted(text);Speak(text);return Task.CompletedTask;}
     public void PauseForBusy(bool value){busy=value;if(value){Silence();StopInput();}else ArmLater();}
     private void ArmLater(){if(disposed)return;rearm.Stop();if(AssistantPreferences.Current.WakeEnabled&&!busy&&!speaking)rearm.Start();}
     private void TryWake()
@@ -158,15 +166,18 @@ public sealed class AssistantVoice : IDisposable
     {
         Silence();StopInput();speaking=true;var version=speechVersion;using var current=new CancellationTokenSource(TimeSpan.FromMinutes(3));conversion=current;var cancel=current.Token;System.Media.SoundPlayer? playback=null;
         var dir=Path.Combine(AssistantPreferences.DataDirectory,"speech-temp",Guid.NewGuid().ToString("N"));Directory.CreateDirectory(dir);var input=Path.Combine(dir,"source.wav");var output=Path.Combine(dir,"hoshino.wav");var textFile=Path.Combine(dir,"text.txt");
+        var elapsed=System.Diagnostics.Stopwatch.StartNew();var stage="Ожидаю готовности нейроголоса";
+        var progress=new DispatcherTimer{Interval=TimeSpan.FromSeconds(1)};
+        progress.Tick+=(_,_)=>{if(version==speechVersion)Report(stage+" · "+(int)elapsed.Elapsed.TotalSeconds+" с");};progress.Start();
         try {
-            Report("Готовлю голос Хошино локально…");
-            if(AssistantPreferences.Current.NeuralEnabled){await File.WriteAllTextAsync(textFile,text.Length>1500?text[..1500]:text,cancel);await RvcVoice.Synthesize(textFile,input,cancel);}
+            Report(stage+"…");
+            if(AssistantPreferences.Current.NeuralEnabled){await File.WriteAllTextAsync(textFile,text.Length>1500?text[..1500]:text,cancel);}
             else using(var tts=new SpeechSynthesizer()){var prefs=AssistantPreferences.Current;var name=Voices().FirstOrDefault(v=>v==prefs.VoiceName)??Voices().FirstOrDefault(v=>v.Contains("Irina"))??throw new IOException("Нужен русский голос Windows");tts.SelectVoice(name);tts.Rate=Math.Clamp(prefs.VoiceRate,-5,5);tts.SetOutputToWaveFile(input);var complete=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);tts.SpeakCompleted+=(_,e)=>{if(e.Error!=null)complete.TrySetException(e.Error);else complete.TrySetResult();};using var registration=cancel.Register(()=>tts.SpeakAsyncCancelAll());tts.SpeakAsync(text.Length>1500?text[..1500]:text);await complete.Task;cancel.ThrowIfCancellationRequested();}
-            if(AssistantPreferences.Current.RvcEnabled)await RvcVoice.Convert(input,output,cancel);else File.Copy(input,output);cancel.ThrowIfCancellationRequested();playback=new System.Media.SoundPlayer(output);player=playback;Report("Хошино говорит…");await Task.Run(()=>playback.PlaySync(),cancel);
+            await worker.Render(textFile,input,output,message=>{stage=message;Report(stage+" · "+(int)elapsed.Elapsed.TotalSeconds+" с");},cancel);cancel.ThrowIfCancellationRequested();progress.Stop();playback=new System.Media.SoundPlayer(output);player=playback;Report("Хошино говорит…");await Task.Run(()=>playback.PlaySync(),cancel);
         } catch(OperationCanceledException){}catch(Exception e){Report("Голос RVC недоступен: "+e.Message);}
-        finally {playback?.Dispose();if(ReferenceEquals(player,playback))player=null;try{File.Delete(input);File.Delete(output);File.Delete(textFile);Directory.Delete(dir);}catch(IOException){}if(ReferenceEquals(conversion,current))conversion=null;if(version==speechVersion){speaking=false;ArmLater();}}
+        finally {progress.Stop();playback?.Dispose();if(ReferenceEquals(player,playback))player=null;try{File.Delete(input);File.Delete(output);File.Delete(textFile);Directory.Delete(dir);}catch(IOException){}if(ReferenceEquals(conversion,current))conversion=null;if(version==speechVersion){speaking=false;ArmLater();}}
     }
     private SpeechSynthesizer CreateSpeaker(){var s=new SpeechSynthesizer();s.SpeakCompleted+=(_,_)=>ui.BeginInvoke(()=>{if(s.State==SynthesizerState.Ready){speaking=false;ArmLater();}});return s;}
     public void Silence(){speechVersion++;conversion?.Cancel();player?.Stop();speaker?.SpeakAsyncCancelAll();speaking=false;ArmLater();}
-    public void Dispose(){Microsoft.Win32.SystemEvents.SessionSwitch-=SessionChanged;Microsoft.Win32.SystemEvents.PowerModeChanged-=PowerChanged;disposed=true;Silence();StopInput();speaker?.Dispose();model?.Dispose();}
+    public void Dispose(){Microsoft.Win32.SystemEvents.SessionSwitch-=SessionChanged;Microsoft.Win32.SystemEvents.PowerModeChanged-=PowerChanged;disposed=true;Silence();StopInput();worker.Dispose();speaker?.Dispose();model?.Dispose();}
 }
