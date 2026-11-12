@@ -4,6 +4,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 namespace DIsland;
@@ -23,7 +24,8 @@ public sealed class CodexBridge : IDisposable
         try {
             var executable = AssistantPreferences.Current.CodexExecutable;
             if (string.IsNullOrWhiteSpace(executable)) executable = ResolveCodex();
-            var info = new ProcessStartInfo(executable, "app-server") { UseShellExecute = false, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
+            var utf8 = new UTF8Encoding(false);
+            var info = new ProcessStartInfo(executable, "app-server") { UseShellExecute = false, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true, StandardInputEncoding = utf8, StandardOutputEncoding = utf8, StandardErrorEncoding = utf8 };
             var home = Path.Combine(AssistantPreferences.DataDirectory, "codex"); Directory.CreateDirectory(home); info.Environment["CODEX_HOME"] = home;
             foreach (var key in new[] { "OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "CHATGPT_ACCESS_TOKEN" }) info.Environment.Remove(key);
             process = Process.Start(info) ?? throw new IOException("Не удалось запустить Codex"); var current = process;

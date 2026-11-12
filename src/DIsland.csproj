@@ -13,7 +13,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>GlassDesk.ico</ApplicationIcon>
     <Product>Hoshino Island</Product>
-    <Version>0.14.0</Version>
+    <Version>0.14.1</Version>
     <Description>Hoshino Island — unofficial system helper based on D-Island</Description>
     <Authors>Takayom1; h7 (upstream)</Authors>
     <Company>Takayom1</Company>

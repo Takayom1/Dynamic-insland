@@ -76,7 +76,7 @@ Uninstall D-Island from Windows Settings > Apps and answer Yes when asked whethe
 This statement may change with new versions; each version includes its own copy. Questions: https://ibuildrigs.com
 
 UNOFFICIAL LOCAL PROTOTYPE 0.2 — ADDITIONAL DATA FLOWS
-Modified for the user with Codex. This is not an official D-Island release.
+Modified by Takayom1. This is not an official D-Island release.
 AI messages are sent to OpenAI only on Send. A plaintext local transcript is appended under %LOCALAPPDATA%\GlassChat\history.txt. Codex credentials/config are isolated under %LOCALAPPDATA%\GlassChat\codex. No ChatGPT application history synchronization is provided.
 Lyrics: after the user enables LRCLIB lookup in the lyrics panel, song title, artist, album and duration are sent to https://lrclib.net for current/new tracks for this app run. LRCLIB also sees the network address. No microphone capture or audio upload. Lyrics cache is in memory only, capped at 50 records. Close the app to disable the session's lookup consent and clear this cache. The original privacy statement above describes inherited D-Island features.
 

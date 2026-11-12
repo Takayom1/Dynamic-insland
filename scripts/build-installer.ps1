@@ -9,7 +9,7 @@ try {
  Copy-Item README.md publish/README-RU.md
  & $Iscc packaging/HoshinoIsland.iss
  if($LASTEXITCODE -ne 0){throw 'Installer compilation failed'}
- $file=Get-Item outputs/Hoshino-Island-Setup-0.14.0.exe
+ $file=Get-Item outputs/Hoshino-Island-Setup-0.14.1.exe
  $hash=(Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
  [IO.File]::WriteAllText($file.FullName+'.sha256',($hash+'  '+$file.Name+"`n"))
 } finally {Pop-Location}
