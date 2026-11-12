@@ -1,0 +1,95 @@
+D-ISLAND PRIVACY STATEMENT
+What D-Island reads, where it goes, and what is stored
+
+D-Island by h7 (ibuildrigs) - https://ibuildrigs.com
+Applies to D-Island version 1.2.1.
+
+
+IN SHORT
+
+- D-Island has no accounts, no analytics, no telemetry, no advertising and no tracking.
+- Almost everything it reads stays on your computer, in memory, only to show it in the island.
+- It only contacts the internet for weather (and your town's name), for calendar links you add, to check for updates on GitHub, for Apple Music artwork (only if you switch that on), and once to download Microsoft's packaging tools (only if you choose the notifications setup).
+- You can turn every feature below off in Settings, and you can delete all stored data (see section 6).
+
+
+1. INFORMATION PROCESSED ON YOUR COMPUTER ONLY
+
+Read to show it in the island, kept in memory, and not sent anywhere.
+
+- Media: title, artist, album, artwork and playback position from apps that report to Windows' media controls (Spotify, Apple Music, browsers and others).
+- Notifications: other apps' notifications in Windows' notification center (app name, icon, title and text). Only after you complete the one-time setup and Windows grants access. You can hide message text in Settings.
+- Calendar: events from calendars added to Windows (after the one-time setup) and from iCal links you add: titles, times, locations and meeting links.
+- Clipboard: when you copy something, the type of content and the first line of text, to show the "Copied" alert. Not stored. Content that password managers mark as private is never read. The text preview can be switched off.
+- Keyboard: only whether Caps Lock or Num Lock changed, and whether the paste shortcuts (Ctrl+V, Shift+Insert) and the hide/show shortcut were pressed (which needs knowing whether Ctrl, Alt, Shift or Windows is held). No other keys are read and nothing you type in other apps is recorded.
+- To-do list and notes: what you type on the island's To-Do and Notes pages. Stored only on this PC (see section 3) and never sent anywhere.
+- Microphone and camera: only WHICH apps are currently using them, to show the privacy dot. D-Island never accesses your microphone or camera itself and never hears or sees anything.
+- Audio level: the loudness of what is playing, to animate the music bars. No audio is recorded.
+- Screen behind the island: for the Liquid Glass effect, Windows draws (or D-Island copies, in memory) the small area of the screen behind the island to blur it. It is never saved or sent. Window positions and types are checked to know what is behind the island.
+- Devices and status: connected devices and their battery level, battery and charging state, Wi-Fi network name, VPN and internet status, Do Not Disturb, Energy Saver, volume and brightness.
+- Files on the shelf: the locations of files you drag onto the island. The files themselves are not copied, read or uploaded.
+- Apps: the list of apps in your Start menu, so you can choose quick-launch apps.
+
+
+2. INFORMATION SENT OVER THE INTERNET
+
+- Weather (Open-Meteo, https://open-meteo.com): your approximate location, rounded to about 1 km, or the city you chose, to get the forecast, every 20 minutes while the island runs; and city names you type in the search box. Windows provides the location when you choose "My location" and allow location access.
+- Place name (OpenStreetMap Nominatim, https://nominatim.openstreetmap.org), only with "My location": the same rounded location, to show your town's name on the weather page. Asked once per place; the name is remembered in your settings file.
+- Calendar links (your calendar provider, such as Google, Microsoft or Apple): D-Island downloads the iCal links you add, about every 10 minutes. These links act like a password; D-Island stores them only in your settings file and shows only the website name.
+- Apple Music motion artwork (Apple), OFF by default: if you switch it on, the artist and album of what you are playing are sent to Apple's iTunes Search and Apple Music web services to find and download the album's animated artwork.
+- Updates (GitHub, https://github.com): once a day, D-Island asks GitHub for the latest official release of D-Island. The request contains only D-Island's version number. If there is a newer version, D-Island downloads it from GitHub, checks it against its published checksum, and installs it. You can turn checking and automatic installing off in Settings > Updates.
+- Notifications setup (Microsoft NuGet, https://www.nuget.org), only if you run the setup: a one-time download of Microsoft's packaging tools.
+
+These services receive your IP address as part of any internet request, and handle data under their own privacy policies. D-Island sends nothing else, and nothing at all to h7 / ibuildrigs.
+
+
+3. WHAT IS STORED, AND WHERE
+
+- %AppData%\DIsland\settings.json: your settings, including your chosen city, iCal links, quick apps and alarms.
+- %AppData%\DIsland\error.log: technical error details if something goes wrong (no personal content is written on purpose).
+- %LocalAppData%\DIsland\shelf.json: the file locations on your shelf.
+- %LocalAppData%\DIsland\notes.json: your to-do list and notes.
+- %LocalAppData%\DIsland\MotionArt\: cached Apple Music artwork videos (only if switched on), up to 200 MB.
+- %LocalAppData%\DIsland\Identity\: packaging tools and the setup log (only if you ran the setup).
+- %LocalAppData%\DIsland\Updates\: the latest downloaded update installer, until it's replaced by the next one.
+
+Nothing leaves your computer from these files.
+
+
+4. WINDOWS PERMISSIONS D-ISLAND MAY ASK FOR
+
+Location (for weather); notification access and calendar access (after the one-time setup); and administrator permission once, to trust D-Island's own signing certificate (part of the same setup). You can withdraw them at any time in Windows Settings > Privacy & security, or by choosing "A city" for weather and switching notifications and the Windows calendar off in D-Island's Settings.
+
+
+5. CHILDREN
+
+D-Island does not knowingly collect any information from anyone; it has no online service.
+
+
+6. DELETING YOUR DATA
+
+Uninstall D-Island from Windows Settings > Apps and answer Yes when asked whether to delete your settings and saved data, or delete the folders listed in section 3. Uninstalling also removes the notifications setup.
+
+
+7. CHANGES AND CONTACT
+
+This statement may change with new versions; each version includes its own copy. Questions: https://ibuildrigs.com
+
+UNOFFICIAL LOCAL PROTOTYPE 0.2 — ADDITIONAL DATA FLOWS
+Modified for the user with Codex. This is not an official D-Island release.
+AI messages are sent to OpenAI only on Send. A plaintext local transcript is appended under %LOCALAPPDATA%\GlassChat\history.txt. Codex credentials/config are isolated under %LOCALAPPDATA%\GlassChat\codex. No ChatGPT application history synchronization is provided.
+Lyrics: after the user enables LRCLIB lookup in the lyrics panel, song title, artist, album and duration are sent to https://lrclib.net for current/new tracks for this app run. LRCLIB also sees the network address. No microphone capture or audio upload. Lyrics cache is in memory only, capped at 50 records. Close the app to disable the session's lookup consent and clear this cache. The original privacy statement above describes inherited D-Island features.
+
+UPDATE 0.4: At the user's explicit request, LRCLIB lookup is now automatic on startup/track changes. Song title, artist, album and duration are sent to LRCLIB without a per-track click; no audio or file upload. The sole display toggle controls compact lyrics visibility, not network lookup. The old enable-search instructions above are superseded for this local prototype.
+
+UPDATE 0.5: Automatic lyrics fallback now also contacts LyricsPlus (lyricsplus.prjktla.my.id), lrc.red, and Better Lyrics (api.betterlyrics.org, including its Kugou endpoint) when earlier sources provide no synchronized lyrics or fail. These services receive song metadata (title, artist, album where applicable, duration) and see the request network address. No account tokens, microphone audio or local music files are sent. Display toggle does not disable lookup. No new API keys are created or stored. Provider errors/limits are skipped; timed results cache for 60 minutes and misses for 2 minutes in memory.
+
+GLASSDESK MODIFICATION 0.8 — ASSISTANT DATA AND PERMISSIONS
+The user explicitly requested a system/file assistant. ChatGPT sign-in is managed by the official Codex App Server in a separate per-user CODEX_HOME under %LOCALAPPDATA%\GlassChat\codex. The application clears inherited OpenAI/Codex key environment variables for that process. Messages, paths and file content accessed by the agent may be sent to OpenAI. Local assistant settings and plaintext account-partitioned chat history are stored outside the installation directory. No ChatGPT application history sync is implemented. Logging out does not automatically delete local conversations.
+Windows System.Speech provides button-triggered single-utterance dictation (up to 30 seconds) and optional speech synthesis. The application does not upload captured audio to a separate transcription service. Recognized text is placed in the composer for review and is sent to Codex only when Send is pressed. Collapsing stops dictation. Availability of language components depends on Windows and its installed SAPI engines.
+File access modes and model are selected by the user. Codex uses untrusted approvals directed to the user. The client presents supported command/file-change approval requests and rejects unsupported requests; it does not automatically accept Windows consent, UAC or model requests. Full-access mode removes file isolation and not every write is approval-gated. The helper instructions require separate confirmation before destructive/system changes. There is no dedicated mouse/keyboard automation module.
+Redistributable GlassDesk-Share.zip excludes local credentials, settings, conversations, setup logs and debug symbols. Updating/modifying the program must not be confused with signing in or granting Windows permissions. Original D-Island auto-updates are disabled for this fork.
+
+HOSHINO ISLAND 0.9: The optional Hoshino companion reads the current pointer coordinates locally, only while visible, to choose a gaze frame. Pointer positions are not recorded or uploaded. This does not grant mouse/app control. Disable gaze or the companion in Settings > Hoshino and appearance. Installation identity, account storage and history locations retain their former internal names for compatibility.
+
+HOSHINO ISLAND 0.11: Wallpaper Engine integration and its polling/control service removed. Optional Obsidian integration reads/writes user-selected Markdown paths under a selected vault. Task synchronization polls the selected file every 2 seconds; it does not upload the vault. The chosen memory note (up to 12,000 characters in context), paths and content the agent accesses may be sent to OpenAI while using new/resumed Codex chats. Account, history, integration preferences, conflict drafts and backups remain outside the installation folder under the per-user GlassChat data directory. Local journal entries without a vault are stored there too. See README-RU.md for the exact paths and limitations. Pointer gaze remains local. Random companion lines are shipped text, not generated remotely.

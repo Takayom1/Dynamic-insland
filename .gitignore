@@ -1,0 +1,30 @@
+work/
+outputs/
+src/bin/
+src/obj/
+.vs/
+*.user
+# Legacy upstream packaging and contributor instructions are not part of this project.
+src/.github/
+src/installer/
+src/tools/
+src/CLAUDE.md
+src/CLA.md
+src/CONTRIBUTING.md
+src/SECURITY.md
+src/README.md
+src/DIsland.ico
+# Local credentials, runtime data and signing material.
+**/auth.json
+**/assistant.json
+**/obsidian.json
+**/settings.json
+**/history.txt
+**/vault-backups/
+**/journal-drafts/
+*.pfx
+*.p12
+*.key
+.env
+.env.*
+publish/
