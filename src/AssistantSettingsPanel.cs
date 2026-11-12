@@ -19,7 +19,7 @@ public sealed class AssistantSettingsPanel : StackPanel
     private readonly ComboBox neuralSpeaker=new();
     private readonly CheckBox rvc=new(){Content="Преобразовывать речь через локальный RVC"};
     private readonly TextBox rvcPython=new(),rvcEngine=new(),rvcModel=new(),rvcIndex=new();
-    private readonly CheckBox wake=new(){Content="Ждать «Хей Хошино» — микрофон включён постоянно"};
+    private readonly CheckBox wake=new(){Content="Ждать выбранную фразу — микрофон включён постоянно"};
     private readonly ComboBox voices=new(){MinHeight=32};
     private readonly Slider rate=new(){Minimum=-5,Maximum=5,TickFrequency=1,IsSnapToTickEnabled=true};
     private readonly CheckBox speech = new() { Content = "Озвучивать готовый ответ голосом Windows", Foreground = Brushes.White };
@@ -45,6 +45,9 @@ public sealed class AssistantSettingsPanel : StackPanel
         Label("Голос"); culture.Text = prefs.RecognitionCulture; Children.Add(culture); RefreshCultures(); culture.Text = prefs.RecognitionCulture;
         var refreshVoice = new WrapPanel(); Children.Add(refreshVoice); Button(refreshVoice, "Обновить распознаватели", () => { RefreshCultures(); feedback.Text = "Список речевых компонентов обновлён"; return Task.CompletedTask; });
         speech.IsChecked = prefs.SpeakReplies; Children.Add(speech);
+        var wakePhrase=new ComboBox{ItemsSource=WakeProfile.Phrases,SelectedItem=WakeProfile.SelectedPhrase};Children.Add(wakePhrase);
+        wakePhrase.SelectionChanged+=(_,_)=>{if(wakePhrase.SelectedItem is not string phrase)return;try{AssistantPreferences.Current.WakePhrase=phrase;AssistantPreferences.Current.Save(false);AssistantRuntime.Voice?.Configure();}catch(Exception e){feedback.Text=e.Message;}};
+        Text("Выбери, на какую фразу реагировать. У каждой свой профиль калибровки; без него используется распознаватель Windows. Для выбранного микрофона лучше повторить новую фразу три раза.");
         wake.IsChecked=prefs.WakeEnabled;Children.Add(wake);
         var wakeState=new TextBlock{TextWrapping=TextWrapping.Wrap,Opacity=.7,Margin=new Thickness(0,6,0,8)};Children.Add(wakeState);
         void RefreshWake(){wakeState.Text=AssistantRuntime.Voice?.CurrentStatus ?? (AssistantPreferences.Current.WakeEnabled?"Ожидание включено":"Ожидание выключено");}
@@ -53,9 +56,9 @@ public sealed class AssistantSettingsPanel : StackPanel
         var liveVoice=AssistantRuntime.Voice;Action<string> updateStatus=text=>wakeState.Text=text;if(liveVoice!=null){liveVoice.Status+=updateStatus;Unloaded+=(_,_)=>liveVoice.Status-=updateStatus;}
         var calibrationButtons=new WrapPanel();Children.Add(calibrationButtons);
         Button(calibrationButtons,"Калибровка · три повторения",()=>{var voice=AssistantRuntime.Voice??throw new InvalidOperationException("Остров не запущен");var window=new WakeCalibrationWindow(voice,()=>{wake.IsChecked=AssistantPreferences.Current.WakeEnabled;speech.IsChecked=AssistantPreferences.Current.SpeakReplies;RefreshWake();}){Owner=Window.GetWindow(this)};window.ShowDialog();RefreshWake();return Task.CompletedTask;});
-        Button(calibrationButtons,"Сбросить калибровку",()=>{if(MessageBox.Show("Удалить локальные звуковые шаблоны?", "Калибровка",MessageBoxButton.YesNo)!=MessageBoxResult.Yes)return Task.CompletedTask;System.IO.File.Delete(WakeProfile.FilePath);AssistantRuntime.Voice?.Configure();RefreshWake();return Task.CompletedTask;});
+        Button(calibrationButtons,"Сбросить калибровку",()=>{if(MessageBox.Show("Удалить шаблоны выбранной фразы?", "Калибровка",MessageBoxButton.YesNo)!=MessageBoxResult.Yes)return Task.CompletedTask;System.IO.File.Delete(WakeProfile.PathFor(WakeProfile.SelectedPhrase));AssistantRuntime.Voice?.Configure();RefreshWake();return Task.CompletedTask;});
         Text("Переключатель ожидания применяется сразу, отдельное сохранение внизу для него не нужно. Калибровка учит локальные шаблоны фразы, а не большую речевую модель. Индикатор уровня поможет выбрать правильный микрофон.");
-        Text("После активации дождитесь надписи «Слушаю» и произнесите команду отдельно. Она отправится после паузы. Ожидание приостанавливается во время ответа и озвучивания; опасные действия подтверждаются кнопкой. Скрытие приложения не выключает ожидание фразы. Нажмите индикатор микрофона на раскрытом острове или отключите эту настройку, чтобы остановить ожидание.");
+        Text("После активации дождитесь сигнала и появления Хошино, затем произнесите команду отдельно. Она отправится после паузы. Ожидание приостанавливается во время ответа и озвучивания; опасные действия подтверждаются кнопкой. Скрытие приложения не выключает ожидание фразы. Нажмите индикатор микрофона на раскрытом острове или отключите эту настройку, чтобы остановить ожидание.");
         voices.ItemsSource=AssistantVoice.Voices();voices.SelectedItem=prefs.VoiceName;if(voices.SelectedIndex<0)voices.SelectedItem=AssistantVoice.Voices().FirstOrDefault(n=>n.Contains("Irina"))??AssistantVoice.Voices().FirstOrDefault();Children.Add(voices);
         Text("Скорость голоса · медленнее ← → быстрее");rate.Value=prefs.VoiceRate;Children.Add(rate);
         var preview=new WrapPanel();Children.Add(preview);
@@ -83,7 +86,7 @@ public sealed class AssistantSettingsPanel : StackPanel
         Button(save, "Сохранить настройки", () =>
         {
             if (AssistantRuntime.Busy) throw new InvalidOperationException("Сначала остановите ответ");
-            var settings = new AssistantPreferences { Model = model.SelectedValue?.ToString() ?? prefs.Model, AccessMode = access.SelectedValue?.ToString() ?? "workspace-write", WorkingDirectory = work.Text.Trim(), Vault = vault.Text.Trim(), CodexExecutable = executable.Text.Trim(), RecognitionCulture = culture.Text.Trim(), SpeakReplies = speech.IsChecked == true, WakeEnabled=wake.IsChecked==true,MicrophoneDevice=AssistantPreferences.Current.MicrophoneDevice, VoiceName=voices.SelectedItem?.ToString()??"",VoiceRate=(int)rate.Value, NeuralEnabled=neural.IsChecked==true,NeuralModel=neuralModel.Text.Trim(),NeuralSpeaker=neuralSpeaker.SelectedItem?.ToString()??"baya",RvcEnabled=rvc.IsChecked==true,RvcPython=rvcPython.Text.Trim(),RvcEngine=rvcEngine.Text.Trim(),RvcModel=rvcModel.Text.Trim(),RvcIndex=rvcIndex.Text.Trim(), Instructions = instructions.Text };
+            var settings = new AssistantPreferences { Model = model.SelectedValue?.ToString() ?? prefs.Model, AccessMode = access.SelectedValue?.ToString() ?? "workspace-write", WorkingDirectory = work.Text.Trim(), Vault = vault.Text.Trim(), CodexExecutable = executable.Text.Trim(), RecognitionCulture = culture.Text.Trim(), SpeakReplies = speech.IsChecked == true, WakeEnabled=wake.IsChecked==true,WakePhrase=AssistantPreferences.Current.WakePhrase,MicrophoneDevice=AssistantPreferences.Current.MicrophoneDevice, VoiceName=voices.SelectedItem?.ToString()??"",VoiceRate=(int)rate.Value, NeuralEnabled=neural.IsChecked==true,NeuralModel=neuralModel.Text.Trim(),NeuralSpeaker=neuralSpeaker.SelectedItem?.ToString()??"baya",RvcEnabled=rvc.IsChecked==true,RvcPython=rvcPython.Text.Trim(),RvcEngine=rvcEngine.Text.Trim(),RvcModel=rvcModel.Text.Trim(),RvcIndex=rvcIndex.Text.Trim(), Instructions = instructions.Text };
             settings.Save(); AssistantRuntime.Bridge.Restart(); feedback.Text = "Сохранено. Следующее сообщение начнёт новый диалог с этими параметрами."; return Task.CompletedTask;
         });
         Children.Add(feedback);

@@ -224,7 +224,8 @@ public sealed class AiChatPanel : Grid, IDisposable
         }
         catch (Exception e) { status.Text = e.Message; }
     }
-    public void StopListening() {voice.Stop();}
+    public void StopListening() {voice.ReturnToWake();}
+    public void SetLowPower(bool value)=>voice.SetLowPower(value);
     public void DisableWake() {AssistantPreferences.Current.WakeEnabled=false;AssistantPreferences.Current.Save(false);voice.Configure();}
 
     public void Dispose()

@@ -38,6 +38,7 @@ public partial class MainWindow : Window
     private static readonly Color DefaultMediaAccent = Color.FromRgb(0x30, 0xD1, 0x58);
 
     private readonly AppSettings _settings;
+    private readonly Func<FullscreenState> _fullscreenDetector;
     private readonly StateController _state = new();
     private readonly TimerService _timer = new();
     private readonly MediaService _media = new();
@@ -94,6 +95,8 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _progressTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
     private int _msOutside;
     private bool _hoverSuppressed;
+    private bool _gameFullscreen,_gameSuppressed,_voiceChatOpen;
+    private readonly DispatcherTimer _gameWatch=new(DispatcherPriority.Background){Interval=TimeSpan.FromSeconds(1)};
     private bool _equalizerRunning;
     private bool _osdDimmed;
     private Artwork? _shownArt;
@@ -102,10 +105,11 @@ public partial class MainWindow : Window
     private readonly DropShadowEffect _shadow = new() { BlurRadius = 22, ShadowDepth = 3, Direction = 270, Color = Colors.Black };
     private Color? _accent;
 
-    public MainWindow(AppSettings settings)
+    public MainWindow(AppSettings settings,Func<FullscreenState>? fullscreenDetector=null)
     {
         StartupMark("window constructor");
         _settings = settings;
+        _fullscreenDetector=fullscreenDetector??FullscreenService.Inspect;
         _notch.Reset(IsNotch ? 1 : 0);
         _weather = new WeatherService(settings);
         _calendar = new CalendarService(settings);
@@ -141,13 +145,14 @@ public partial class MainWindow : Window
         VoiceFocusHoshino.Content=new HoshinoCompanion(settings){Listening=()=>_aiPanel.IsListening,Working=()=>AssistantRuntime.Busy||_aiPanel.PreparingVoice,Playing=()=>_aiPanel.IsSpeaking};
         _aiPanel.VoiceActivated+=BeginVoiceFocus;
         _aiPanel.VoiceStateChanged+=()=>{if(!IsLoaded)return;if(_voiceFocus&&!_aiPanel.VoiceInteraction)EndVoiceFocus();UpdatePrivacyIndicators();};
-        PrivacyChip.ToolTip="Нажмите, чтобы выключить ожидание «Хей Хошино»";
+        PrivacyChip.ToolTip="Нажмите, чтобы выключить голосовую активацию";
         PrivacyChip.MouseLeftButtonUp+=(_,e)=>{if(_aiPanel.MicrophoneActive)_aiPanel.DisableWake();e.Handled=true;};
 
         _windows = new WindowEventWatcher(TimeSpan.FromMilliseconds(30));
         _background = new BackgroundDetector(GetIslandScreenRect, _windows);
         _windows.Changed += () =>
         {
+            UpdateGameMode();if(_gameSuppressed)return;
             KeepOnTop(); // cheap check; only acts if something now covers the island
             UpdateWinUiBehind();
             if (_gpuActive) _gpuBlur?.SyncWindows();
@@ -273,6 +278,7 @@ public partial class MainWindow : Window
 
     public void SetIslandHidden(bool hidden)
     {
+        if(_gameSuppressed&&!hidden){IslandHidden=false;return;}
         if (hidden == IslandHidden) return;
         if (hidden)
         {
@@ -478,6 +484,7 @@ public partial class MainWindow : Window
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
+        _gameWatch.Tick+=(_,_)=>UpdateGameMode();_gameWatch.Start();UpdateGameMode();
         StartupMark("loaded");
         KeepOnTop(force: true);
         UpdateWinUiBehind();
@@ -750,6 +757,7 @@ public partial class MainWindow : Window
 
     private void OnClosed(object? sender, EventArgs e)
     {
+        _gameWatch.Stop();
         _journal.Dispose();
         _obsidian.Dispose();
         _aiPanel.Dispose();
@@ -805,7 +813,7 @@ public partial class MainWindow : Window
     private void Render()
     {
         // Hidden (shortcut / tray): skip layout and animation entirely; catch up when shown.
-        if (IslandHidden) return;
+        if (IslandHidden||_gameSuppressed) return;
         FrameworkElement view;
         double width, height, radius;
 
@@ -936,19 +944,15 @@ public partial class MainWindow : Window
     }
 
     private bool _voiceFocus;
-    private bool _voiceReturnExpanded;
-    private ExpandedPage _voiceReturnPage;
     private void BeginVoiceFocus()
     {
-        if(!_voiceFocus){_voiceReturnExpanded=_state.IsExpanded;_voiceReturnPage=_page;}
-        _voiceFocus=true;EndTyping(restoreFocus:true);_hoverTimer.Stop();_leavePoll.Stop();_progressTimer.Stop();
+        _voiceFocus=true;_voiceChatOpen=false;UpdateGameMode();if(IslandHidden)SetIslandHidden(false);EndTyping(restoreFocus:true);_hoverTimer.Stop();_leavePoll.Stop();_progressTimer.Stop();
         foreach(var view in _views){view.BeginAnimation(OpacityProperty,null);view.Opacity=0;view.IsHitTestVisible=false;}
         _currentView=null;Render();
     }
     private void EndVoiceFocus()
     {
-        _voiceFocus=false;_msOutside=0;ShowPage(_voiceReturnPage,false);_state.IsExpanded=_voiceReturnExpanded;
-        if(_voiceReturnExpanded){_leavePoll.Start();_progressTimer.Start();}UpdateSecondActivity();Render();
+        _voiceFocus=false;_voiceChatOpen=true;_msOutside=0;OpenAiChat();UpdateSecondActivity();UpdateGameMode();
     }
     private void OnVoiceFocusClick(object sender,MouseButtonEventArgs e){_voiceFocus=false;OpenAiChat();e.Handled=true;}
     private void OnHomeLyricsToggle(object sender, RoutedEventArgs e) => _lyricsPanel.ToggleCompact();
@@ -959,6 +963,30 @@ public partial class MainWindow : Window
         _alertPage = null;
         ShowPage(ExpandedPage.Ai, animate: _state.IsExpanded);
         SetExpanded(true);
+    }
+
+    private void UpdateGameMode()
+    {
+        if(!IsLoaded)return;
+        var foreground=_fullscreenDetector();
+        ApplyGameMode(_settings.GameModeEnabled&&(foreground is FullscreenState.OwnWindow or FullscreenState.TransientOverlay?_gameFullscreen:foreground==FullscreenState.Fullscreen));
+    }
+    private void ApplyGameMode(bool fullscreen)
+    {
+        _gameFullscreen=fullscreen;var hide=fullscreen&&!_voiceFocus&&!_voiceChatOpen;
+        if(hide==_gameSuppressed){if(hide){_clockTimer.Stop();_glassTimer.Stop();_compactLyricsTimer.Stop();SetEqualizerRunning(false);}return;}_gameSuppressed=hide;
+        _aiPanel.SetLowPower(hide);_lyricsPanel.SetSuspended(hide);
+        if(hide){
+            EndTyping(false);_hoverTimer.Stop();_leavePoll.Stop();_progressTimer.Stop();_clockTimer.Stop();_compactLyricsTimer.Stop();_glassTimer.Stop();_shadowRestore?.Stop();
+            SetEqualizerRunning(false);_meter.Dispose();_capture.Dispose();_gpuBlur?.Dispose();_gpuBlur=null;_gpuActive=false;GlassImage.Source=null;_glassBitmap=null;
+            _motionCancel?.Cancel();MotionBanner.Close();_motionKey=null;_motionReady=false;
+            if(_animating){CompositionTarget.Rendering-=OnRendering;_animating=false;}Hide();
+            GC.Collect(GC.MaxGeneration,GCCollectionMode.Optimized,blocking:false,compacting:false);
+        }else{
+            UpdateClock();_clockTimer.Start();if(_lyricsPanel.CompactEnabled)_compactLyricsTimer.Start();
+            if(!IslandHidden){Show();Root.BeginAnimation(OpacityProperty,null);Root.Opacity=1;Render();UpdateGlass();KeepOnTop(true);}
+            if(_state.IsExpanded){_leavePoll.Start();_progressTimer.Start();}UpdateEqualizer();UpdateMotionArtwork(_media.Current);
+        }
     }
 
 
@@ -1486,7 +1514,7 @@ public partial class MainWindow : Window
         var what = use.CameraInUse && use.MicrophoneInUse ? "Camera & mic"
             : use.CameraInUse ? "Camera"
             : "Mic";
-        PrivacyChipText.Text = _aiPanel.MicrophoneActive ? (_aiPanel.IsCalibrating ? "Калибровка · микрофон" : _aiPanel.IsListening ? "Хошино · слушаю команду" : "Микрофон · Хей Хошино") : $"{what} · {string.Join(", ", use.CameraApps.Concat(use.MicrophoneApps).Distinct())}";
+        PrivacyChipText.Text = _aiPanel.MicrophoneActive ? (_aiPanel.IsCalibrating ? "Калибровка · микрофон" : _aiPanel.IsListening ? "Хошино · слушаю команду" : "Микрофон · "+WakeProfile.SelectedPhrase) : $"{what} · {string.Join(", ", use.CameraApps.Concat(use.MicrophoneApps).Distinct())}";
         ApplyGeometry();
     }
 
@@ -1555,7 +1583,7 @@ public partial class MainWindow : Window
     /// </summary>
     private void UpdateGlass()
     {
-        var wantBlur = IsGlass && IsLoaded && _settings.GlassBlur > 0;
+        var wantBlur = IsGlass && IsLoaded && !_gameSuppressed && _settings.GlassBlur > 0;
 
         // Auto: the GPU engine can't draw WinUI 3 windows (their thumbnails come out empty), so while
         // one is the top window behind the island the screen-capture engine takes over.
@@ -1758,6 +1786,7 @@ public partial class MainWindow : Window
     /// </summary>
     private void KeepOnTop(bool force = false)
     {
+        if(_gameSuppressed)return;
         var island = new WindowInteropHelper(this).Handle;
         if (island == IntPtr.Zero) return;
         if (!force && !IsCoveredFromAbove(island)) return;
@@ -2128,6 +2157,7 @@ public partial class MainWindow : Window
 
     private void SetExpanded(bool expanded)
     {
+        if(!expanded)_voiceChatOpen=false;
         _msOutside = 0;
         if (!expanded) { _aiPanel.StopListening(); EndTyping(restoreFocus: true); if(_state.IsExpanded) ShowPage(ExpandedPage.Home, animate:false); }
         if (expanded)
@@ -2159,6 +2189,7 @@ public partial class MainWindow : Window
         if (changed) UpdatePrivacyIndicators(); // the dot hides while expanded (the chip shows instead)
         UpdateMotionPlayback();
         if (changed && _settings.SolidWhenExpanded && _settings.AdaptiveBackground) ApplyTheme();
+        UpdateGameMode();
     }
 
     /// <summary>
@@ -3792,6 +3823,7 @@ public partial class MainWindow : Window
 
     private void SetEqualizerRunning(bool running)
     {
+        running&=!_gameSuppressed;
         // Real waveform: a meter-driven loop instead of the looping animation.
         var real = running && _settings.RealWaveform;
         var meterWasRunning = _meterRunning;
@@ -3888,6 +3920,7 @@ public partial class MainWindow : Window
     /// <summary>Starts a lookup when the album changes (cached albums resolve immediately).</summary>
     private void UpdateMotionArtwork(MediaInfo? media)
     {
+        if(_gameSuppressed)return;
         var key = media is null || !_settings.MotionArtwork
             ? null
             : $"{media.Artist}|{media.Album}|{(string.IsNullOrEmpty(media.Album) ? media.Title : "")}";

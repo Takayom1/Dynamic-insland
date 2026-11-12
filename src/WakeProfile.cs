@@ -11,6 +11,9 @@ public sealed class WakeProfile
     public List<float[][]> Templates {get;set;}=new();
     public double Threshold {get;set;}
     public static string FilePath=>Path.Combine(AssistantPreferences.DataDirectory,"wake-profile.json");
+    public static readonly string[] Phrases={"Хей Хошино","Эй Хошино","Хошино"};
+    public static string SelectedPhrase=>Phrases.Contains(AssistantPreferences.Current.WakePhrase)?AssistantPreferences.Current.WakePhrase:Phrases[0];
+    public static string PathFor(string phrase)=>phrase switch {"Эй Хошино"=>Path.Combine(AssistantPreferences.DataDirectory,"wake-profile-ey.json"),"Хошино"=>Path.Combine(AssistantPreferences.DataDirectory,"wake-profile-name.json"),_=>FilePath};
     public static WakeProfile? Load(string? path=null)
     {
         try {path??=FilePath;if(!File.Exists(path)||new FileInfo(path).Length>2_000_000)return null;

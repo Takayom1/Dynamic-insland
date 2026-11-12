@@ -31,6 +31,7 @@ Telegram: https://t.me/takayom1
 - ObsidianStore.cs
 - PhraseDeck.cs
 - Services/LyricsService.cs
+- Services/FullscreenService.cs
 
 Исходные авторские реплики в Assets/Hoshino/phrases.json также распространяются под MIT. Встроенные рисунки/векторная геометрия персонажа и материалы третьих лиц не включены в этот перечень лицензируемого кода. Права на Blue Archive, персонажа, сторонние знаки и названия этим документом не передаются. Это неофициальный фан-проект.
 

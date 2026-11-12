@@ -166,6 +166,8 @@ public partial class SettingsWindow : Window
             () => s.IdleStyle, v => s.IdleStyle = v);
 
         var interaction = Section("INTERACTION");
+        Check(interaction,"Игровой режим · скрывать остров поверх полноэкранных приложений",()=>s.GameModeEnabled,v=>s.GameModeEnabled=v);
+        Note(interaction,"Останавливает анимации, лирику и захват фона, освобождает модели голоса и GPU. Выбранная фраза продолжает работать; для ответа модели загрузятся заново.");
         Check(interaction, "Expand on hover (click always works)", () => s.ExpandOnHover, v => s.ExpandOnHover = v);
         Slider(interaction, "Hover delay", 0, 1000, 10, () => s.HoverDelayMs, v => s.HoverDelayMs = (int)v, v => $"{v:0} ms");
         Slider(interaction, "Collapse delay", 0, 1500, 10, () => s.CollapseDelayMs, v => s.CollapseDelayMs = (int)v, v => $"{v:0} ms");

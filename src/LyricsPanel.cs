@@ -23,6 +23,8 @@ public sealed class LyricsPanel : StackPanel, IDisposable
     private LyricsResult? result;
     private int active = -2;
     private bool enabled = true;
+    private bool suspended;
+    public void SetSuspended(bool value){if(suspended==value)return;suspended=value;if(value)request?.Cancel();else{key=null;Update(media);}}
     public bool CompactEnabled { get; private set; }
     public string CompactText { get; private set; } = "Ищем текст…";
     public event Action? LayoutChanged;
@@ -53,7 +55,7 @@ public sealed class LyricsPanel : StackPanel, IDisposable
         if (next != key)
         {
             key = next; request?.Cancel(); result = null; lines.Children.Clear(); active = -2;
-            if (enabled) _ = Load();
+            if (enabled&&!suspended) _ = Load();
         }
         Tick();
     }

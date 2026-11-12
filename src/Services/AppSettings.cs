@@ -157,6 +157,7 @@ public sealed class AppSettings
 
     // ---- interaction & animation
     public bool ExpandOnHover { get; set; } = true;
+    public bool GameModeEnabled {get;set;}=true;
     public int HoverDelayMs { get; set; } = 120;
     public int CollapseDelayMs { get; set; } = 250;
 
@@ -362,6 +363,7 @@ public sealed class AppSettings
         ShowDateWhenIdle = d.ShowDateWhenIdle;
         IdleStyle = d.IdleStyle;
         ExpandOnHover = d.ExpandOnHover;
+        GameModeEnabled = d.GameModeEnabled;
         HoverDelayMs = d.HoverDelayMs;
         CollapseDelayMs = d.CollapseDelayMs;
         AnimationSpeed = d.AnimationSpeed;

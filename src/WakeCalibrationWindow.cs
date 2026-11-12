@@ -15,10 +15,10 @@ public sealed class WakeCalibrationWindow : Window
     private readonly ComboBox devices;
     public WakeCalibrationWindow(AssistantVoice voice,Action finished)
     {
-        this.voice=voice;this.finished=finished;Title="Хей Хошино · три повторения";Width=560;Height=480;ResizeMode=ResizeMode.NoResize;WindowStartupLocation=WindowStartupLocation.CenterOwner;Background=(Brush)Application.Current.FindResource("HoshinoBackground");Foreground=Brushes.White;AssistantTheme.Apply(this);
+        this.voice=voice;this.finished=finished;Title=WakeProfile.SelectedPhrase+" · три повторения";Width=560;Height=480;ResizeMode=ResizeMode.NoResize;WindowStartupLocation=WindowStartupLocation.CenterOwner;Background=(Brush)Application.Current.FindResource("HoshinoBackground");Foreground=Brushes.White;AssistantTheme.Apply(this);
         var panel=new StackPanel{Margin=new Thickness(26)};Content=panel;
         panel.Children.Add(new TextBlock{Text="Запомним твоё произношение",FontSize=23,FontWeight=FontWeights.SemiBold});
-        panel.Children.Add(new TextBlock{Text="Три коротких повторения «Хей Хошино», отдельно от команды. Шаблоны звуковых признаков останутся только на этом ПК; исходные записи не сохраняются и не отправляются. Это не проверка личности.",TextWrapping=TextWrapping.Wrap,Opacity=.65,Margin=new Thickness(0,12,0,14)});
+        panel.Children.Add(new TextBlock{Text=$"Три коротких повторения «{WakeProfile.SelectedPhrase}», отдельно от команды. Шаблоны звуковых признаков останутся только на этом ПК; исходные записи не сохраняются и не отправляются. Это не проверка личности.",TextWrapping=TextWrapping.Wrap,Opacity=.65,Margin=new Thickness(0,12,0,14)});
         devices=new ComboBox{ItemsSource=AssistantVoice.Microphones(),DisplayMemberPath="Name",SelectedValuePath="Id",SelectedValue=AssistantPreferences.Current.MicrophoneDevice};if(devices.SelectedIndex<0)devices.SelectedIndex=0;panel.Children.Add(devices);
         panel.Children.Add(progress);panel.Children.Add(level);panel.Children.Add(enable);panel.Children.Add(start);
         var close=new Button{Content="Закрыть",HorizontalAlignment=HorizontalAlignment.Left};panel.Children.Add(close);close.Click+=(_,_)=>Close();
@@ -32,7 +32,7 @@ public sealed class WakeCalibrationWindow : Window
     private void State(){start.IsEnabled=!voice.Calibrating;devices.IsEnabled=!voice.Calibrating;}
     private void Completed()
     {
-        try{var p=AssistantPreferences.Current;p.WakeEnabled=enable.IsChecked==true;if(p.WakeEnabled)p.SpeakReplies=true;p.Save(false);voice.Configure();progress.Text="Готово: три шаблона сохранены. "+(p.WakeEnabled?"Теперь можно сказать «Хей Хошино».":"Ожидание можно включить позже.");finished();}
+        try{var p=AssistantPreferences.Current;p.WakeEnabled=enable.IsChecked==true;if(p.WakeEnabled)p.SpeakReplies=true;p.Save(false);voice.Configure();progress.Text="Готово: три шаблона сохранены. "+(p.WakeEnabled?$"Теперь можно сказать «{WakeProfile.SelectedPhrase}».":"Ожидание можно включить позже.");finished();}
         catch(Exception e){progress.Text=e.Message;}
     }
 }
