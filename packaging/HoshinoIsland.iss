@@ -1,4 +1,4 @@
-#define AppVersion "0.13.0"
+#define AppVersion "0.14.0"
 #ifndef AppSource
   #define AppSource "..\publish"
 #endif

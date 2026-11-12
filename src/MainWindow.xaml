@@ -106,6 +106,9 @@
 
         <Grid x:Name="ContentLayer">
 
+            <Grid x:Name="VoiceFocusView" Style="{StaticResource IslandView}" Width="320" Height="220" Background="Transparent" MouseLeftButtonUp="OnVoiceFocusClick" ToolTip="Нажмите на Хошино, чтобы открыть чат">
+                <ContentControl x:Name="VoiceFocusHoshino" Width="176" Height="176" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False"/>
+            </Grid>
             <Grid x:Name="LyricsView" Style="{StaticResource IslandView}" Width="420" Height="42" Background="Transparent" Cursor="Hand" ToolTip="Нажмите, чтобы раскрыть островок и отключить текст">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="50" />

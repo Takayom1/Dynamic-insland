@@ -17,6 +17,8 @@ Telegram: https://t.me/takayom1
 - AssistantSettingsPanel.cs
 - AssistantTheme.cs
 - AssistantVoice.cs
+- WakeProfile.cs
+- WakeCalibrationWindow.cs
 - CodexBridge.cs
 - ConversationStore.cs
 - HomeTasksPanel.cs

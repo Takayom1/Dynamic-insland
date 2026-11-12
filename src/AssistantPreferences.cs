@@ -18,6 +18,7 @@ public sealed class AssistantPreferences
     public string RecognitionCulture { get; set; } = "ru-RU";
     public bool SpeakReplies { get; set; }
     public bool WakeEnabled {get;set;}
+    public int MicrophoneDevice {get;set;}=-1;
     public string VoiceName {get;set;} = "";
     public int VoiceRate {get;set;} = -1;
     public bool NeuralEnabled {get;set;}

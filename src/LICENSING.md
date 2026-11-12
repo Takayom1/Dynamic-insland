@@ -1,5 +1,7 @@
 # Hoshino Island — лицензирование
 
+Пути компонентов ниже указаны относительно src/.
+
 Проект Takayom1, разрабатывается с помощью Codex.
 GitHub: https://github.com/Takayom1
 Telegram: https://t.me/takayom1
@@ -15,6 +17,8 @@ Telegram: https://t.me/takayom1
 - AssistantSettingsPanel.cs
 - AssistantTheme.cs
 - AssistantVoice.cs
+- WakeProfile.cs
+- WakeCalibrationWindow.cs
 - CodexBridge.cs
 - ConversationStore.cs
 - HomeTasksPanel.cs

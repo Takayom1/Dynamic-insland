@@ -138,8 +138,9 @@ public partial class MainWindow : Window
         };
         _lyricsPanel.CompactChanged += UpdateCompactLyric;
         _aiPanel.TypingRequested += BeginTyping;
-        _aiPanel.VoiceActivated+=OpenAiChat;
-        _aiPanel.VoiceStateChanged+=()=>{if(IsLoaded)UpdatePrivacyIndicators();};
+        VoiceFocusHoshino.Content=new HoshinoCompanion(settings){Listening=()=>_aiPanel.IsListening,Working=()=>AssistantRuntime.Busy||_aiPanel.PreparingVoice,Playing=()=>_aiPanel.IsSpeaking};
+        _aiPanel.VoiceActivated+=BeginVoiceFocus;
+        _aiPanel.VoiceStateChanged+=()=>{if(!IsLoaded)return;if(_voiceFocus&&!_aiPanel.VoiceInteraction)EndVoiceFocus();UpdatePrivacyIndicators();};
         PrivacyChip.ToolTip="Нажмите, чтобы выключить ожидание «Хей Хошино»";
         PrivacyChip.MouseLeftButtonUp+=(_,e)=>{if(_aiPanel.MicrophoneActive)_aiPanel.DisableWake();e.Handled=true;};
 
@@ -154,7 +155,7 @@ public partial class MainWindow : Window
 
         _views = new FrameworkElement[]
         {
-            ClockView, MediaView, TimerView, StopwatchView, OsdView, BatteryView, TimerDoneView, InfoView, NotificationView,
+            VoiceFocusView, ClockView, MediaView, TimerView, StopwatchView, OsdView, BatteryView, TimerDoneView, InfoView, NotificationView,
             ExpandedView, LyricsView,
         };
         foreach (var view in _views)
@@ -808,7 +809,11 @@ public partial class MainWindow : Window
         FrameworkElement view;
         double width, height, radius;
 
-        if (_state.IsExpanded)
+        if (_voiceFocus)
+        {
+            view=VoiceFocusView;width=320;height=220;radius=IsNotch?NotchExpandedRadius:IslandExpandedRadius;
+        }
+        else if (_state.IsExpanded)
         {
             UpdateExpandedSections();
             view = ExpandedView;
@@ -831,6 +836,8 @@ public partial class MainWindow : Window
             radius = IsNotch ? Math.Min(NotchCompactRadius, height / 2) : height / 2;
         }
 
+        foreach(var item in _views)item.Visibility=_voiceFocus&&item!=VoiceFocusView?Visibility.Hidden:Visibility.Visible;
+        ActivityBubble.Visibility=_voiceFocus?Visibility.Collapsed:ActivityBubble.Visibility;
         CompactHoshinoHost.Visibility = ShowCompactCompanion ? Visibility.Visible : Visibility.Collapsed;
         SwitchTo(view);
         AnimateTo(width, height, radius * Roundness);
@@ -901,7 +908,7 @@ public partial class MainWindow : Window
     };
     private readonly LyricsPanel _lyricsPanel;
     private readonly DispatcherTimer _compactLyricsTimer = new() { Interval = TimeSpan.FromMilliseconds(150) };
-    private bool ShowCompactCompanion => !_state.IsExpanded && _settings.ShowHoshino && _state.Transient is null && !_lyricsPanel.CompactEnabled;
+    private bool ShowCompactCompanion => !_voiceFocus && !_state.IsExpanded && _settings.ShowHoshino && _state.Transient is null && !_lyricsPanel.CompactEnabled;
     private bool ShowingCompactLyrics => !_state.IsExpanded && _lyricsPanel.CompactEnabled && _state.Transient is null;
     private Artwork? _compactArtwork;
 
@@ -928,6 +935,22 @@ public partial class MainWindow : Window
         if (ShowingCompactLyrics) Render();
     }
 
+    private bool _voiceFocus;
+    private bool _voiceReturnExpanded;
+    private ExpandedPage _voiceReturnPage;
+    private void BeginVoiceFocus()
+    {
+        if(!_voiceFocus){_voiceReturnExpanded=_state.IsExpanded;_voiceReturnPage=_page;}
+        _voiceFocus=true;EndTyping(restoreFocus:true);_hoverTimer.Stop();_leavePoll.Stop();_progressTimer.Stop();
+        foreach(var view in _views){view.BeginAnimation(OpacityProperty,null);view.Opacity=0;view.IsHitTestVisible=false;}
+        _currentView=null;Render();
+    }
+    private void EndVoiceFocus()
+    {
+        _voiceFocus=false;_msOutside=0;ShowPage(_voiceReturnPage,false);_state.IsExpanded=_voiceReturnExpanded;
+        if(_voiceReturnExpanded){_leavePoll.Start();_progressTimer.Start();}UpdateSecondActivity();Render();
+    }
+    private void OnVoiceFocusClick(object sender,MouseButtonEventArgs e){_voiceFocus=false;OpenAiChat();e.Handled=true;}
     private void OnHomeLyricsToggle(object sender, RoutedEventArgs e) => _lyricsPanel.ToggleCompact();
 
     public void OpenAiChat()
@@ -1199,6 +1222,7 @@ public partial class MainWindow : Window
     /// </summary>
     private void OnRootPreviewMouseWheel(object sender, MouseWheelEventArgs e)
     {
+        if (_voiceFocus) { e.Handled = true; return; }
         if (!_state.IsExpanded || _page == ExpandedPage.Ai) return;
         var now = Environment.TickCount64;
         var delta = e.Delta;
@@ -1384,7 +1408,7 @@ public partial class MainWindow : Window
         var left = ShowCompactCompanion ? 44 : 0;
         if (Math.Abs(top - _viewsTop) < 0.01 && ClockView.Margin.Left == left) return;
         _viewsTop = top;
-        foreach (var view in _views) view.Margin = new Thickness(view == ExpandedView || view == LyricsView ? 0 : left, top, 0, 0);
+        foreach (var view in _views) view.Margin = new Thickness(view == ExpandedView || view == LyricsView || view==VoiceFocusView ? 0 : left, top, 0, 0);
     }
 
     private void ApplyGeometry()
@@ -1456,13 +1480,13 @@ public partial class MainWindow : Window
         var brush = use.CameraInUse ? CameraBrush : MicrophoneBrush;
 
         PrivacyDot.Fill = brush;
-        PrivacyDot.Visibility = active && !_state.IsExpanded ? Visibility.Visible : Visibility.Collapsed;
+        PrivacyDot.Visibility = active && (!_state.IsExpanded||_voiceFocus) ? Visibility.Visible : Visibility.Collapsed;
         PrivacyChip.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
         PrivacyChipDot.Fill = brush;
         var what = use.CameraInUse && use.MicrophoneInUse ? "Camera & mic"
             : use.CameraInUse ? "Camera"
             : "Mic";
-        PrivacyChipText.Text = _aiPanel.MicrophoneActive ? (_aiPanel.IsListening ? "Хошино · слушаю команду" : "Микрофон · Хей Хошино") : $"{what} · {string.Join(", ", use.CameraApps.Concat(use.MicrophoneApps).Distinct())}";
+        PrivacyChipText.Text = _aiPanel.MicrophoneActive ? (_aiPanel.IsCalibrating ? "Калибровка · микрофон" : _aiPanel.IsListening ? "Хошино · слушаю команду" : "Микрофон · Хей Хошино") : $"{what} · {string.Join(", ", use.CameraApps.Concat(use.MicrophoneApps).Distinct())}";
         ApplyGeometry();
     }
 
@@ -2042,6 +2066,7 @@ public partial class MainWindow : Window
 
     private void OnRootMouseEnter(object sender, MouseEventArgs e)
     {
+        if(_voiceFocus)return;
         if (_settings.ExpandOnHover && !_state.IsExpanded && !_hoverSuppressed) _hoverTimer.Start();
     }
 
@@ -2053,6 +2078,7 @@ public partial class MainWindow : Window
 
     private void OnRootMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
+        if (_voiceFocus) { e.Handled = true; return; }
         _hoverTimer.Stop();
 
         if (!_state.IsExpanded && _currentView == TimerDoneView && _state.Transient == IslandView.TimerDone)
@@ -3570,7 +3596,7 @@ public partial class MainWindow : Window
 
     private void UpdateSecondActivity()
     {
-        var secondary = _settings.ShowSecondActivity && !_state.IsExpanded && !_lyricsPanel.CompactEnabled && _state.Transient is null
+        var secondary = !_voiceFocus && _settings.ShowSecondActivity && !_state.IsExpanded && !_lyricsPanel.CompactEnabled && _state.Transient is null
             ? _state.SecondaryView
             : null;
         var show = secondary is not null;

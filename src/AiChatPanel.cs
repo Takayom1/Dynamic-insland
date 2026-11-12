@@ -21,6 +21,10 @@ public sealed class AiChatPanel : Grid, IDisposable
     private readonly StackPanel heroPanel = new();
     public bool IsListening => voice.Listening;
     public bool MicrophoneActive=>voice.MicrophoneActive;
+    public bool VoiceInteraction=>voice.InteractionActive;
+    public bool IsCalibrating=>voice.Calibrating;
+    public bool IsSpeaking=>voice.IsSpeaking;
+    public bool PreparingVoice=>voice.PreparingVoice;
     public event Action? VoiceActivated;
     public event Action? VoiceStateChanged;
     private ChatConversation? conversation;

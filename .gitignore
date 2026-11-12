@@ -30,3 +30,5 @@ src/DIsland.ico
 publish/
 
 src/Assets/Speech/
+
+**/wake-profile.json
