@@ -25,8 +25,10 @@ public sealed class AiChatPanel : Grid, IDisposable
     public bool IsCalibrating=>voice.Calibrating;
     public bool IsSpeaking=>voice.IsSpeaking;
     public bool PreparingVoice=>voice.PreparingVoice;
+    public bool IsTranscribing=>voice.Transcribing;
     public event Action? VoiceActivated;
     public event Action? VoiceStateChanged;
+    public event Action<string>? ActivityChanged;
     private ChatConversation? conversation;
     private ChatMessage? assistantMessage;
     private DateTime lastSave;
@@ -89,7 +91,7 @@ public sealed class AiChatPanel : Grid, IDisposable
         bridge.Event += OnEvent;
         bridge.Request += ApprovalDialog.Handle;
         voice.Recognized += text => Dispatcher.InvokeAsync(() => { Input.Text = text; status.Text = "Диктовка готова — проверьте текст и отправьте"; });
-        voice.Status += text => Dispatcher.InvokeAsync(() => status.Text = text);
+        voice.Status += text => Dispatcher.InvokeAsync(() => {status.Text = text;ActivityChanged?.Invoke(text);});
         voice.Activated+=()=>VoiceActivated?.Invoke();
         voice.StateChanged+=()=>VoiceStateChanged?.Invoke();
         voice.CommandRecognized+=async text=> {
@@ -112,7 +114,7 @@ public sealed class AiChatPanel : Grid, IDisposable
         scroll?.ScrollToEnd(); return label;
     }
 
-    private void SetBusy(bool value) { busy = value; voice.PauseForBusy(value); AssistantRuntime.Busy = value; if (!value) { AssistantRuntime.ActiveThread = null; AssistantRuntime.ActiveTurn = null; } send.IsEnabled = !value; stop.Visibility = value ? Visibility.Visible : Visibility.Collapsed; stop.IsEnabled = value; }
+    private void SetBusy(bool value) { busy = value; voice.PauseForBusy(value); AssistantRuntime.Busy = value; if (!value) { AssistantRuntime.ActiveThread = null; AssistantRuntime.ActiveTurn = null; }else AssistantCues.Play(AssistantCue.Working);ActivityChanged?.Invoke(value?"Думаю…":"Готово");send.IsEnabled = !value; stop.Visibility = value ? Visibility.Visible : Visibility.Collapsed; stop.IsEnabled = value; }
     private Task Connect() => bridge.Start();
     private async Task Send()
     {
@@ -139,7 +141,7 @@ public sealed class AiChatPanel : Grid, IDisposable
             var result = await bridge.Call("turn/start", new { threadId = thread, input = new[] { new { type = "text", text } } });
             if (busy) { turn = result["turn"]?["id"]?.ToString(); AssistantRuntime.ActiveTurn = turn; if (stopRequested) await Interrupt(); }
         }
-        catch (Exception e) { SetBusy(false); status.Text = "Не удалось выполнить запрос"; Bubble("Ошибка: " + e.Message, false); }
+        catch (Exception e) { SetBusy(false); status.Text = "Не удалось выполнить запрос"; ActivityChanged?.Invoke(status.Text); AssistantCues.Play(AssistantCue.Error); Bubble("Ошибка: " + e.Message, false); }
     }
     private async Task Interrupt()
     {
@@ -163,13 +165,16 @@ public sealed class AiChatPanel : Grid, IDisposable
             var type = p?["item"]?["type"]?.ToString();
             if (type == "commandExecution") status.Text = "Выполняется команда…";
             else if (type == "fileChange") status.Text = "Изменяются файлы…";
+            if (type is "commandExecution" or "fileChange") ActivityChanged?.Invoke(status.Text);
         }
         if (method == "turn/completed")
         {
             if (response != null) Record("Codex: " + response.Text); SaveConversation(); SetBusy(false); turn = null;
             var turnStatus = p?["turn"]?["status"]?.ToString();
             status.Text = turnStatus == "interrupted" ? "Ответ остановлен" : turnStatus == "failed" ? (p?["turn"]?["error"]?["message"]?.ToString() ?? "Запрос завершился ошибкой") : "Готово";
-            if (turnStatus == "completed" && response != null) try { voice.Speak(response.Text); } catch (Exception e) { status.Text = "Озвучивание недоступно: " + e.Message; }
+            ActivityChanged?.Invoke(status.Text);
+            if (turnStatus == "failed") AssistantCues.Play(AssistantCue.Error);
+            if (turnStatus == "completed" && response != null) try { AssistantCues.Play(AssistantCue.Reply);voice.Speak(response.Text); } catch (Exception e) { status.Text = "Озвучивание недоступно: " + e.Message; }
         }
     });
     private void Record(string text)

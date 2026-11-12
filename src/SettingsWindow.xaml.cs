@@ -166,6 +166,7 @@ public partial class SettingsWindow : Window
             () => s.IdleStyle, v => s.IdleStyle = v);
 
         var interaction = Section("INTERACTION");
+        Choice(interaction,"Монитор острова",new[]{("","Основной монитор")}.Concat(System.Windows.Forms.Screen.AllScreens.Select((screen,i)=>(screen.DeviceName,$"Экран {i+1}"+(screen.Primary?" · основной":"")))).ToArray(),()=>s.MonitorDeviceName,v=>s.MonitorDeviceName=v);
         Check(interaction,"Игровой режим · скрывать остров поверх полноэкранных приложений",()=>s.GameModeEnabled,v=>s.GameModeEnabled=v);
         Note(interaction,"Останавливает анимации, лирику и захват фона, освобождает модели голоса и GPU. Выбранная фраза продолжает работать; для ответа модели загрузятся заново.");
         Check(interaction, "Expand on hover (click always works)", () => s.ExpandOnHover, v => s.ExpandOnHover = v);
@@ -312,7 +313,7 @@ public partial class SettingsWindow : Window
         Link("Приватность",Doc("PRIVACY.txt"));
         about.Children.Add(links);
         var credits=new StackPanel { Margin=new Thickness(0,20,0,0) };
-        credits.Children.Add(new TextBlock { Text="Основа и зависимости",FontWeight=FontWeights.SemiBold,Margin=new Thickness(0,0,0,8) });
+        credits.Children.Add(new TextBlock { Text="Лицензии и авторство",FontWeight=FontWeights.SemiBold,Margin=new Thickness(0,0,0,8) });
         credits.Children.Add(new TextBlock { Text="Based on D-Island by h7 (ibuildrigs) - https://github.com/H7gamer/d-island",TextWrapping=TextWrapping.Wrap,FontSize=12 });
         credits.Children.Add(new TextBlock { Text="Модификация Takayom1 с помощью Codex. Не является официальным выпуском D-Island. Унаследованные части: D-Island License 1.0; наши самостоятельные компоненты: MIT. Права на Blue Archive и персонажа принадлежат их правообладателям.",TextWrapping=TextWrapping.Wrap,Opacity=.65,FontSize=12,Margin=new Thickness(0,8,0,0) });
         about.Children.Add(credits);
@@ -421,7 +422,7 @@ public partial class SettingsWindow : Window
     /// <summary>Alarms: time (HH:mm), daily or once, on/off, label; plus "Add alarm".</summary>
     private void AlarmList(Panel panel)
     {
-        Note(panel, "Alarms ring in the island (with sound) while D-Island is running. Click the island to stop one.");
+        Note(panel, "Alarms ring in the island (with sound) while Hoshino Island is running. Click the island to stop one.");
         var list = new StackPanel();
         panel.Children.Add(list);
 
@@ -514,9 +515,9 @@ public partial class SettingsWindow : Window
         }
 
         Note(panel, "Windows only lets apps read notifications and the Windows calendar if they have a package " +
-                    "identity. The one-time setup registers one for D-Island: it downloads Microsoft's packaging " +
+                    "identity. The one-time setup registers one for Hoshino Island: it downloads Microsoft's packaging " +
                     "tools (about 100 MB, once), creates a signing certificate, and Windows asks for permission once " +
-                    "to trust it. D-Island restarts when it's done.");
+                    "to trust it. Hoshino Island restarts when it's done.");
         var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 4) };
         var setup = new Button { Style = (Style)FindResource("ChipButton"), Content = "Set up…", Margin = new Thickness(0) };
         setup.Click += (_, _) =>

@@ -23,6 +23,38 @@ class Engine:
         self.torch = None
         self.tts = None
         self.converter = None
+        self.recognizer = None
+        self.recognition_device = "cpu"
+        self.dll_directory = None
+
+    def load_recognizer(self, request):
+        if self.recognizer is not None:
+            return
+        send("stage", stage="load_recognizer")
+        model = Path(request["whisper_model"])
+        if not (model / "model.bin").is_file():
+            raise RuntimeError("Choose a local faster-whisper model folder")
+        # Reuse the CUDA libraries from the explicitly selected Python environment.
+        try:
+            import torch
+            lib = Path(torch.__file__).parent / "lib"
+            if os.name == "nt":
+                self.dll_directory = os.add_dll_directory(str(lib))
+                os.environ["PATH"] = str(lib) + os.pathsep + os.environ.get("PATH", "")
+        except ImportError:
+            pass
+        import ctranslate2
+        from faster_whisper import WhisperModel
+        self.recognition_device = "cuda" if ctranslate2.get_cuda_device_count() else "cpu"
+        compute = "int8_float32" if self.recognition_device == "cuda" else "int8"
+        self.recognizer = WhisperModel(str(model), device=self.recognition_device, compute_type=compute, local_files_only=True, cpu_threads=4)
+
+    def transcribe(self, request):
+        self.load_recognizer(request)
+        send("stage", stage="transcribe", device=self.recognition_device)
+        segments, _ = self.recognizer.transcribe(request["input"], language=request.get("language", "ru"),
+            beam_size=5, vad_filter=False, condition_on_previous_text=False, temperature=0)
+        return " ".join(segment.text.strip() for segment in segments).strip()
 
     def load(self, request):
         if self.torch is None:
@@ -95,7 +127,12 @@ for line in sys.stdin:
     try:
         request = json.loads(line)
         started = time.perf_counter()
-        if request["action"] == "prepare":
+        recognized = None
+        if request["action"] == "prepare_asr":
+            engine.load_recognizer(request)
+        elif request["action"] == "transcribe":
+            recognized = engine.transcribe(request)
+        elif request["action"] == "prepare":
             engine.prepare(request)
         elif request["action"] == "render":
             engine.load(request)
@@ -103,6 +140,7 @@ for line in sys.stdin:
             engine.render(request, text, Path(request["input"]), Path(request["output"]))
         else:
             raise ValueError("Unknown voice action")
-        send("done", seconds=round(time.perf_counter() - started, 3), device=engine.converter.config.device if engine.converter else "cpu")
+        device = engine.recognition_device if request["action"] in ("prepare_asr", "transcribe") else engine.converter.config.device if engine.converter else "cpu"
+        send("done", seconds=round(time.perf_counter() - started, 3), device=device, text=recognized)
     except Exception as error:
         send("error", message=str(error)[-1200:])

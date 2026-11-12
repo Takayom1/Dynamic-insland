@@ -1,4 +1,6 @@
-#define AppVersion "0.16.0"
+#ifndef AppVersion
+  #define AppVersion "0.17.0"
+#endif
 #ifndef SetupOutputName
   #define SetupOutputName "Hoshino-Island-Core-Setup-" + AppVersion
 #endif
@@ -21,14 +23,14 @@ ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\outputs
 OutputBaseFilename={#SetupOutputName}
 SetupIconFile=..\src\GlassDesk.ico
-UninstallDisplayIcon={app}\DIsland.exe
+UninstallDisplayIcon={app}\HoshinoIsland.exe
 Compression=lzma2/fast
 SolidCompression=yes
 WizardStyle=modern
 DisableProgramGroupPage=yes
 LicenseFile=..\src\LICENSING.md
 CloseApplications=yes
-CloseApplicationsFilter=DIsland.exe
+CloseApplicationsFilter=HoshinoIsland.exe,DIsland.exe
 RestartApplications=no
 MinVersion=10.0.19041
 [Languages]
@@ -38,9 +40,15 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Создать ярлык на рабочем столе"; Flags: unchecked
 [Files]
 Source: "{#AppSource}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+[InstallDelete]
+Type: files; Name: "{app}\DIsland.exe"
+Type: files; Name: "{app}\DIsland.dll"
+Type: files; Name: "{app}\DIsland.deps.json"
+Type: files; Name: "{app}\DIsland.runtimeconfig.json"
+Type: files; Name: "{app}\.local-dev"
 [Icons]
-Name: "{group}\Hoshino Island"; Filename: "{app}\DIsland.exe"
-Name: "{group}\Настройки Hoshino Island"; Filename: "{app}\DIsland.exe"; Parameters: "--settings"
-Name: "{autodesktop}\Hoshino Island"; Filename: "{app}\DIsland.exe"; Tasks: desktopicon
+Name: "{group}\Hoshino Island"; Filename: "{app}\HoshinoIsland.exe"
+Name: "{group}\Настройки Hoshino Island"; Filename: "{app}\HoshinoIsland.exe"; Parameters: "--settings"
+Name: "{autodesktop}\Hoshino Island"; Filename: "{app}\HoshinoIsland.exe"; Tasks: desktopicon
 [Run]
-Filename: "{app}\DIsland.exe"; Description: "Запустить Hoshino Island"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\HoshinoIsland.exe"; Description: "Запустить Hoshino Island"; Flags: nowait postinstall skipifsilent

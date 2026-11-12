@@ -118,3 +118,9 @@ Vosk 0.3.38, Apache-2.0: see Vosk-LICENSE.txt. https://github.com/alphacep/vosk-
 Vosk small Russian model 0.22, Apache-2.0: see Speech-Model-LICENSE.txt and Assets/Speech/vosk-model-small-ru-0.22/README. https://alphacephei.com/vosk/models
 Optional Applio engine is installed separately, MIT, Copyright AI Hispano; it is not bundled. https://github.com/IAHispano/Applio
 User-selected HoshinoOv2 weights and index are not bundled or licensed by this project.
+
+Local development voice improvements:
+Kenney Interface Sounds, CC0 1.0 Universal, https://kenney.nl/assets/interface-sounds.
+Converted WAV cues and original license: Assets/Sounds/LICENSE-KENNEY.txt; source mapping: Assets/Sounds/SOURCE.txt.
+Optional faster-whisper (MIT), https://github.com/SYSTRAN/faster-whisper, and CTranslate2 (MIT), https://github.com/OpenNMT/CTranslate2, are installed separately in the selected Python environment.
+Whisper model weights are separate user-selected files, not bundled with the application.

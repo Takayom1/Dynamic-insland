@@ -18,6 +18,8 @@ Telegram: https://t.me/takayom1
 - AssistantTheme.cs
 - AssistantVoice.cs
 - LocalVoiceWorker.cs
+- SpeechClip.cs (включая VoiceGain)
+- AssistantCues.cs
 - WakeProfile.cs
 - WakeCalibrationWindow.cs
 - CodexBridge.cs
@@ -52,3 +54,5 @@ Based on D-Island by h7 (ibuildrigs) - https://github.com/H7gamer/d-island
 Адаптер Assets/Voice/neural-tts.py — MIT; веса Silero и HoshinoOv2 не входят в эту лицензию и не распространяются с установщиком.
 
 Код installer/ (собственное окно установщика) и Assets/Voice/voice-worker.py — MIT. Векторный образ персонажа сохраняет исключения для графики, описанные выше. Inno Setup и .NET сохраняют собственные условия; они не перелицензируются этим документом. Веса нейромоделей не включены.
+
+Скрипт scripts/update-local.ps1 — MIT. Звуки Assets/Sounds/*.wav — Kenney Interface Sounds, CC0; исходный текст лицензии: Assets/Sounds/LICENSE-KENNEY.txt. faster-whisper и CTranslate2 устанавливаются отдельно под MIT; модель Whisper скачивается отдельно и сохраняет собственную лицензию.

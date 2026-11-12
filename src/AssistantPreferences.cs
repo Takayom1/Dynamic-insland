@@ -16,6 +16,12 @@ public sealed class AssistantPreferences
     public string AccessMode { get; set; } = "workspace-write";
     public string CodexExecutable { get; set; } = "";
     public string RecognitionCulture { get; set; } = "ru-RU";
+    public string RecognitionEngine {get;set;}="vosk";
+    public string WhisperModel {get;set;}="";
+    public double SpeechPauseSeconds {get;set;}=1.6;
+    public double VoiceVolume {get;set;}=.3;
+    public bool AssistantSounds {get;set;}=true;
+    public double AssistantSoundVolume {get;set;}=.08;
     public bool SpeakReplies { get; set; }
     public bool WakeEnabled {get;set;}
     public string WakePhrase {get;set;}="Хей Хошино";

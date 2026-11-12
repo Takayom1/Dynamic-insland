@@ -9,7 +9,7 @@ namespace DIsland.Services;
 public static class StartupManager
 {
     private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    private const string ValueName = "DIsland";
+    private const string ValueName = "HoshinoIsland";
 
     public static bool IsEnabled
     {
@@ -27,5 +27,14 @@ public static class StartupManager
             key.SetValue(ValueName, $"\"{Environment.ProcessPath}\"");
         else
             key.DeleteValue(ValueName, throwOnMissingValue: false);
+    }
+    public static void MigrateLegacyEntry()
+    {
+        using var key=Registry.CurrentUser.OpenSubKey(RunKey,writable:true);
+        if(key?.GetValue("DIsland") is not string old)return;
+        var path=old.Trim('"');
+        try{if(!path.StartsWith(AppContext.BaseDirectory,StringComparison.OrdinalIgnoreCase)&&(!System.IO.File.Exists(path)||!System.Diagnostics.FileVersionInfo.GetVersionInfo(path).ProductName!.Contains("Hoshino",StringComparison.OrdinalIgnoreCase)))return;}
+        catch{return;}
+        key.SetValue(ValueName,$"\"{Environment.ProcessPath}\"");key.DeleteValue("DIsland",false);
     }
 }

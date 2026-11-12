@@ -1,7 +1,7 @@
 ﻿# D-Island - Copyright 2026 h7 (ibuildrigs) and contributors.
 # Licensed under the D-Island License 1.0; see LICENSE.txt and NOTICE.txt.
 
-# Gives DIsland.exe a package identity (needed for reading notifications and the Windows calendar) by
+# Gives HoshinoIsland.exe a package identity (needed for reading notifications and the Windows calendar) by
 # registering a *sparse* package: only a manifest, whose "external location" is the folder holding the
 # exe. Nothing is copied or installed besides that registration.
 #
@@ -27,7 +27,7 @@ New-Item -ItemType Directory -Force $work | Out-Null
 Start-Transcript -Path $log -Force | Out-Null
 
 try {
-    if (-not (Test-Path (Join-Path $ExeDir 'DIsland.exe'))) { throw "DIsland.exe not found in $ExeDir" }
+    if (-not (Test-Path (Join-Path $ExeDir 'HoshinoIsland.exe'))) { throw "HoshinoIsland.exe not found in $ExeDir" }
 
     # Validate the sparse-package contract before downloading, signing or trusting anything.
     if ([Environment]::OSVersion.Version.Build -lt 19041) { throw 'Sparse identity requires Windows build 19041 or later.' }
@@ -126,7 +126,7 @@ try {
         # Identity applies to processes started after registration.
         Get-Process DIsland -ErrorAction SilentlyContinue | Stop-Process -Force
         Start-Sleep -Milliseconds 800
-        Start-Process (Join-Path $ExeDir 'DIsland.exe')
+        Start-Process (Join-Path $ExeDir 'HoshinoIsland.exe')
     }
     Write-Host 'OK'
     $code = 0

@@ -43,8 +43,25 @@ public sealed class AssistantSettingsPanel : StackPanel
         vault.Text=prefs.Vault;
         Text("Синхронизация Obsidian, память и ежедневник настраиваются в отдельном разделе Obsidian основного окна настроек. Подключённый там vault становится рабочей папкой Codex.");
         Label("Голос"); culture.Text = prefs.RecognitionCulture; Children.Add(culture); RefreshCultures(); culture.Text = prefs.RecognitionCulture;
+        Text("Распознавание речи");
+        var recognition=new ComboBox{ItemsSource=new[]{new Choice("whisper","Whisper · точнее, локально"),new Choice("vosk","Vosk · лёгкий, локально"),new Choice("windows","Windows · установленный распознаватель")},DisplayMemberPath="Label",SelectedValuePath="Id",SelectedValue=prefs.RecognitionEngine};Children.Add(recognition);
+        var whisperFolder=new TextBox();Folder("Папка модели faster-whisper",whisperFolder,prefs.WhisperModel);
+        Text("Whisper использует выбранный ниже Python с faster-whisper. Аудио остаётся на ПК. Сохрани настройки после выбора движка и модели.");
+        Text("Пауза окончания фразы · секунды");var speechPause=new Slider{Minimum=.8,Maximum=3,TickFrequency=.1,IsSnapToTickEnabled=true,Value=prefs.SpeechPauseSeconds};Children.Add(speechPause);
         var refreshVoice = new WrapPanel(); Children.Add(refreshVoice); Button(refreshVoice, "Обновить распознаватели", () => { RefreshCultures(); feedback.Text = "Список речевых компонентов обновлён"; return Task.CompletedTask; });
         speech.IsChecked = prefs.SpeakReplies; Children.Add(speech);
+        var volumeLabel=new TextBlock();Children.Add(volumeLabel);var voiceVolume=new Slider{Minimum=0,Maximum=100,TickFrequency=1,IsSnapToTickEnabled=true,Value=Math.Clamp(prefs.VoiceVolume,0,1)*100};Children.Add(voiceVolume);
+        var volumeSave=new System.Windows.Threading.DispatcherTimer{Interval=TimeSpan.FromMilliseconds(250)};
+        void SaveVolume(){try{var p=AssistantPreferences.Current;var value=voiceVolume.Value/100;if(Math.Abs(p.VoiceVolume-value)>.0001){p.VoiceVolume=value;p.Save(false);AssistantRuntime.Voice?.VolumeChanged();}}catch(Exception e){feedback.Text=e.Message;}}
+        void VolumeLabel()=>volumeLabel.Text=$"Громкость Хошино · {voiceVolume.Value:0}%";
+        VolumeLabel();voiceVolume.ValueChanged+=(_,_)=>{VolumeLabel();volumeSave.Stop();volumeSave.Start();};volumeSave.Tick+=(_,_)=>{volumeSave.Stop();SaveVolume();};Unloaded+=(_,_)=>{volumeSave.Stop();SaveVolume();};
+        Text("Меняет только голос Хошино. Для нейроголоса новая громкость применяется со следующей реплики.");
+        var cues=new CheckBox{Content="Свои звуки: слушаю, работаю, ответ готов",IsChecked=prefs.AssistantSounds};Children.Add(cues);
+        var cueVolume=new Slider{Minimum=0,Maximum=40,TickFrequency=1,IsSnapToTickEnabled=true,Value=prefs.AssistantSoundVolume*100};Children.Add(cueVolume);
+        void SaveCues(){try{var p=AssistantPreferences.Current;p.AssistantSounds=cues.IsChecked==true;p.AssistantSoundVolume=cueVolume.Value/100;p.Save(false);}catch(Exception e){feedback.Text=e.Message;}}
+        cues.Checked+=(_,_)=>SaveCues();cues.Unchecked+=(_,_)=>SaveCues();cueVolume.ValueChanged+=(_,_)=>{volumeSave.Stop();volumeSave.Start();};volumeSave.Tick+=(_,_)=>SaveCues();Unloaded+=(_,_)=>SaveCues();
+        var cuePreview=new WrapPanel();Children.Add(cuePreview);Button(cuePreview,"Проверить звук уведомления",()=>{SaveCues();AssistantCues.Play(AssistantCue.Listen);return Task.CompletedTask;});
+
         var wakePhrase=new ComboBox{ItemsSource=WakeProfile.Phrases,SelectedItem=WakeProfile.SelectedPhrase};Children.Add(wakePhrase);
         wakePhrase.SelectionChanged+=(_,_)=>{if(wakePhrase.SelectedItem is not string phrase)return;try{AssistantPreferences.Current.WakePhrase=phrase;AssistantPreferences.Current.Save(false);AssistantRuntime.Voice?.Configure();}catch(Exception e){feedback.Text=e.Message;}};
         Text("Выбери, на какую фразу реагировать. У каждой свой профиль калибровки; без него используется распознаватель Windows. Для выбранного микрофона лучше повторить новую фразу три раза.");
@@ -62,8 +79,8 @@ public sealed class AssistantSettingsPanel : StackPanel
         voices.ItemsSource=AssistantVoice.Voices();voices.SelectedItem=prefs.VoiceName;if(voices.SelectedIndex<0)voices.SelectedItem=AssistantVoice.Voices().FirstOrDefault(n=>n.Contains("Irina"))??AssistantVoice.Voices().FirstOrDefault();Children.Add(voices);
         Text("Скорость голоса · медленнее ← → быстрее");rate.Value=prefs.VoiceRate;Children.Add(rate);
         var preview=new WrapPanel();Children.Add(preview);
-        Button(preview,"Проба голоса Windows",()=>{var speaker=new System.Speech.Synthesis.SpeechSynthesizer();if(voices.SelectedItem is string name)speaker.SelectVoice(name);speaker.Rate=(int)rate.Value;speaker.SpeakCompleted+=(_,_)=>speaker.Dispose();speaker.SetOutputToDefaultAudioDevice();speaker.SpeakAsync("Я здесь. Что у нас случилось?");return Task.CompletedTask;});
-        Text("Обычная диктовка по кнопке остаётся ручной: текст можно проверить перед отправкой. Русские команды обрабатываются локально Vosk, модель включена в установщик. Это выбранный голос Windows, не копия актрисы Хошино.");
+        Button(preview,"Проба голоса Windows",()=>{var speaker=new System.Speech.Synthesis.SpeechSynthesizer();if(voices.SelectedItem is string name)speaker.SelectVoice(name);speaker.Rate=(int)rate.Value;speaker.Volume=(int)Math.Round(voiceVolume.Value);speaker.SpeakCompleted+=(_,_)=>speaker.Dispose();speaker.SetOutputToDefaultAudioDevice();speaker.SpeakAsync("Я здесь. Что у нас случилось?");return Task.CompletedTask;});
+        Text("Обычная диктовка по кнопке остаётся ручной: текст можно проверить перед отправкой. Команды обрабатываются выбранным движком: Whisper или Vosk работают локально. Vosk включён в текущую сборку, модель Whisper выбирается отдельно. Это выбранный голос Windows, не копия актрисы Хошино.");
         neural.IsChecked=prefs.NeuralEnabled;Children.Add(neural);
         Text("Локальный Silero v5_5_ru. Нужен Python с torch и soundfile. Веса не входят в установщик и имеют отдельную некоммерческую лицензию. Без RVC этот режим даёт естественный русский голос; RVC добавляет тембр, но увеличивает задержку.");
         Text("Модель Silero v5_5_ru.pt · полный путь");neuralModel.Text=prefs.NeuralModel;Children.Add(neuralModel);
@@ -86,7 +103,7 @@ public sealed class AssistantSettingsPanel : StackPanel
         Button(save, "Сохранить настройки", () =>
         {
             if (AssistantRuntime.Busy) throw new InvalidOperationException("Сначала остановите ответ");
-            var settings = new AssistantPreferences { Model = model.SelectedValue?.ToString() ?? prefs.Model, AccessMode = access.SelectedValue?.ToString() ?? "workspace-write", WorkingDirectory = work.Text.Trim(), Vault = vault.Text.Trim(), CodexExecutable = executable.Text.Trim(), RecognitionCulture = culture.Text.Trim(), SpeakReplies = speech.IsChecked == true, WakeEnabled=wake.IsChecked==true,WakePhrase=AssistantPreferences.Current.WakePhrase,MicrophoneDevice=AssistantPreferences.Current.MicrophoneDevice, VoiceName=voices.SelectedItem?.ToString()??"",VoiceRate=(int)rate.Value, NeuralEnabled=neural.IsChecked==true,NeuralModel=neuralModel.Text.Trim(),NeuralSpeaker=neuralSpeaker.SelectedItem?.ToString()??"baya",RvcEnabled=rvc.IsChecked==true,RvcPython=rvcPython.Text.Trim(),RvcEngine=rvcEngine.Text.Trim(),RvcModel=rvcModel.Text.Trim(),RvcIndex=rvcIndex.Text.Trim(), Instructions = instructions.Text };
+            var settings = new AssistantPreferences { Model = model.SelectedValue?.ToString() ?? prefs.Model, AccessMode = access.SelectedValue?.ToString() ?? "workspace-write", WorkingDirectory = work.Text.Trim(), Vault = vault.Text.Trim(), CodexExecutable = executable.Text.Trim(), RecognitionCulture = culture.Text.Trim(), RecognitionEngine=recognition.SelectedValue?.ToString()??"vosk",WhisperModel=whisperFolder.Text.Trim(),SpeechPauseSeconds=speechPause.Value,VoiceVolume=voiceVolume.Value/100,AssistantSounds=AssistantPreferences.Current.AssistantSounds,AssistantSoundVolume=AssistantPreferences.Current.AssistantSoundVolume, SpeakReplies = speech.IsChecked == true, WakeEnabled=wake.IsChecked==true,WakePhrase=AssistantPreferences.Current.WakePhrase,MicrophoneDevice=AssistantPreferences.Current.MicrophoneDevice, VoiceName=voices.SelectedItem?.ToString()??"",VoiceRate=(int)rate.Value, NeuralEnabled=neural.IsChecked==true,NeuralModel=neuralModel.Text.Trim(),NeuralSpeaker=neuralSpeaker.SelectedItem?.ToString()??"baya",RvcEnabled=rvc.IsChecked==true,RvcPython=rvcPython.Text.Trim(),RvcEngine=rvcEngine.Text.Trim(),RvcModel=rvcModel.Text.Trim(),RvcIndex=rvcIndex.Text.Trim(), Instructions = instructions.Text };
             settings.Save(); AssistantRuntime.Bridge.Restart(); feedback.Text = "Сохранено. Следующее сообщение начнёт новый диалог с этими параметрами."; return Task.CompletedTask;
         });
         Children.Add(feedback);

@@ -16,6 +16,8 @@ public partial class App : Application
     private Mutex? _singleInstance;
     private EventWaitHandle? _openSettingsSignal;
     private RegisteredWaitHandle? _openSettingsWait;
+    private EventWaitHandle? _devExitSignal;
+    private RegisteredWaitHandle? _devExitWait;
     private AppSettings? _settings;
     private TrayIcon? _tray;
     private MainWindow? _window;
@@ -49,9 +51,10 @@ public partial class App : Application
         base.OnStartup(e);
 
         _settings = AppSettings.Load();
+        StartupManager.MigrateLegacyEntry();
         HoshinoPalette.Apply(_settings);
         // Checks this project only; installer launch requires a user action.
-        Updates = new UpdateService(_settings);
+        if(!File.Exists(Path.Combine(AppContext.BaseDirectory,".local-dev")))Updates = new UpdateService(_settings);
         _window = new MainWindow(_settings);
         _window.SettingsRequested += () => Dispatcher.InvokeAsync(OpenSettings, DispatcherPriority.Background);
         _window.Show();
@@ -86,6 +89,8 @@ public partial class App : Application
         _openSettingsSignal = new EventWaitHandle(false, EventResetMode.AutoReset, OpenSettingsEventName);
         _openSettingsWait = ThreadPool.RegisterWaitForSingleObject(_openSettingsSignal,
             (_, _) => Dispatcher.InvokeAsync(OpenSettings), null, Timeout.Infinite, executeOnlyOnce: false);
+        _devExitSignal=new EventWaitHandle(false,EventResetMode.AutoReset,@"Local\HoshinoIsland.DevExit");
+        _devExitWait=ThreadPool.RegisterWaitForSingleObject(_devExitSignal,(_,_)=>Dispatcher.InvokeAsync(()=>{if(_window?.CanRestartForDevelopment==true)Shutdown();}),null,Timeout.Infinite,false);
 
         if (e.Args.Contains("--settings", StringComparer.OrdinalIgnoreCase)) OpenSettings();
 #if DEBUG
@@ -181,6 +186,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _devExitWait?.Unregister(null);_devExitSignal?.Dispose();
         _openSettingsWait?.Unregister(null);
         _openSettingsSignal?.Dispose();
         _settingsWindow?.Close();

@@ -158,6 +158,7 @@ public sealed class AppSettings
     // ---- interaction & animation
     public bool ExpandOnHover { get; set; } = true;
     public bool GameModeEnabled {get;set;}=true;
+    public string MonitorDeviceName {get;set;}="";
     public int HoverDelayMs { get; set; } = 120;
     public int CollapseDelayMs { get; set; } = 250;
 
@@ -364,6 +365,7 @@ public sealed class AppSettings
         IdleStyle = d.IdleStyle;
         ExpandOnHover = d.ExpandOnHover;
         GameModeEnabled = d.GameModeEnabled;
+        MonitorDeviceName = d.MonitorDeviceName;
         HoverDelayMs = d.HoverDelayMs;
         CollapseDelayMs = d.CollapseDelayMs;
         AnimationSpeed = d.AnimationSpeed;

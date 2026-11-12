@@ -1,0 +1,6 @@
+Kenney Interface Sounds, CC0. https://kenney.nl/assets/interface-sounds
+Selected OGG files converted to PCM16 WAV without changing pitch or duration.
+listen.wav: Audio/glass_002.ogg
+working.wav: Audio/click_003.ogg
+reply.wav: Audio/confirmation_002.ogg
+error.wav: Audio/error_004.ogg

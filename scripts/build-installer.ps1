@@ -4,11 +4,15 @@ $root=Split-Path $PSScriptRoot -Parent
 Push-Location $root
 try {
  if(!(Test-Path src/Assets/Speech/vosk-model-small-ru-0.22/am/final.mdl)){throw 'Download the official Russian model using scripts/prepare-speech.py first.'}
- $version=([xml](Get-Content -Raw src/DIsland.csproj)).Project.PropertyGroup.Version | Where-Object { $_ }
- & $Dotnet publish src/DIsland.csproj -c Release -r win-x64 --self-contained true -o publish -p:DebugType=None -p:DebugSymbols=false
+ $version=([xml](Get-Content -Raw src/HoshinoIsland.csproj)).Project.PropertyGroup.Version | Where-Object { $_ }
+ # Keep legacy binaries and local runtime files out of release staging.
+ $staging=[IO.Path]::GetFullPath((Join-Path $root "work/release-publish-$version"))
+ & $Dotnet publish src/HoshinoIsland.csproj -c Release -r win-x64 --self-contained true -o $staging -p:DebugType=None -p:DebugSymbols=false
  if($LASTEXITCODE -ne 0){throw 'Publish failed'}
- Copy-Item README.md publish/README-RU.md
- & $Iscc packaging/HoshinoIsland.iss
+ Copy-Item README.md (Join-Path $staging 'README-RU.md')
+ $forbidden=@(Get-ChildItem -LiteralPath $staging -File -Recurse|Where-Object{$_.Name -in @('auth.json','assistant.json','settings.json','obsidian.json','history.txt','voice-status.json','.local-dev','DIsland.exe','DIsland.dll') -or $_.Name -like 'wake-profile*.json' -or $_.Extension -in @('.pfx','.p12','.key','.pth','.pt','.index')})
+ if($forbidden.Count){throw ('Private or stale files in release staging: '+(($forbidden|ForEach-Object Name)-join ', '))}
+ & $Iscc "/DAppVersion=$version" "/DAppSource=$staging" packaging/HoshinoIsland.iss
  if($LASTEXITCODE -ne 0){throw 'Installer compilation failed'}
  $core=(Get-Item "outputs/Hoshino-Island-Core-Setup-$version.exe").FullName
  $coreHash=(Get-FileHash -LiteralPath $core -Algorithm SHA256).Hash.ToLowerInvariant()

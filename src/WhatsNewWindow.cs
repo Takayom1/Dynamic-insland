@@ -13,7 +13,7 @@ using DIsland.Services;
 namespace DIsland;
 
 /// <summary>
-/// What changed in each version, shown once after D-Island updates (automatically or by running a
+/// What changed in each version, shown once after Hoshino Island updates (automatically or by running a
 /// newer installer) and from Settings. Add an entry here for every release.
 /// </summary>
 public static class WhatsNew
@@ -24,27 +24,16 @@ public static class WhatsNew
 
     public static readonly IReadOnlyList<Release> Releases = new[]
     {
-        new Release(new Version(1, 2, 1), new[]
+        new Release(new Version(0, 17, 0), new[]
         {
-            new Item("", "#FF30D158", "Updates install by themselves",
-                "A downloaded update now installs within seconds of the island being free, instead of " +
-                "waiting up to 10 minutes. Settings > Updates shows what it's waiting for."),
-        }),
-        new Release(new Version(1, 2, 0), new[]
-        {
-            new Item("", "#FF30D158", "To-Do list",
-                "A new page for quick tasks. Type, press Enter, tick them off. Saved on this PC."),
-            new Item("", "#FFFFD60A", "Notes",
-                "A scratch pad in the island that saves as you type. Press Esc to give the keyboard back."),
-            new Item("", "#FF64D2FF", "Smoother animations",
-                "Switching between Dynamic Island and notch now morphs, and hiding or showing the island " +
-                "shrinks it into the top edge and back."),
-            new Item("", "#FF5AC8FA", "Your town in Weather",
-                "With \"My location\", the weather page now shows where you are instead of \"My location\"."),
-            new Item("", "#FFFF9F0A", "Hide shortcut works everywhere",
-                "If another app already uses the shortcut, D-Island still responds to it, and Settings tells you."),
-            new Item("", "#FFBF5AF2", "What's new",
-                "This window, after every update. Find it again in Settings > Updates."),
+            new Item("", "#FFF0B6D3", "Команды через Whisper",
+                "Дополнительный локальный распознаватель сохраняет фразу через короткие паузы. Python и модель выбираются отдельно в настройках помощника."),
+            new Item("", "#FF64D2FF", "Тише и понятнее",
+                "Отдельная громкость Хошино, тихие сигналы и подписи: слушаю, думаю, выполняю команду, отвечаю."),
+            new Item("", "#FF30D158", "Остров остаётся на своём экране",
+                "Выбери монитор в настройках. Обычное развёрнутое окно и полноэкранное приложение на другом мониторе больше не включают игровой режим."),
+            new Item("", "#FFBF5AF2", "Hoshino Island",
+                "Новое имя исполняемого файла — HoshinoIsland.exe. Аккаунт, история, задачи и калибровка сохраняются при обновлении."),
         }),
     };
 
@@ -62,7 +51,7 @@ public sealed class WhatsNewWindow : Window
 
     public WhatsNewWindow(IReadOnlyList<WhatsNew.Release> releases, Version? updatedFrom)
     {
-        Title = "What's new in D-Island";
+        Title = "What's new in Hoshino Island";
         Width = 440;
         SizeToContent = SizeToContent.Height;
         WindowStyle = WindowStyle.None;
@@ -91,7 +80,7 @@ public sealed class WhatsNewWindow : Window
         var current = UpdateService.CurrentVersion;
         content.Children.Add(new TextBlock
         {
-            Text = updatedFrom is null ? "What's new in D-Island" : "D-Island is up to date",
+            Text = updatedFrom is null ? "What's new in Hoshino Island" : "Hoshino Island is up to date",
             FontSize = 22,
             FontWeight = FontWeights.SemiBold,
             Margin = new Thickness(0, 16, 0, 0),

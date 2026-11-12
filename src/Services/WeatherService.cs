@@ -67,7 +67,7 @@ public sealed class WeatherService : IDisposable
     static WeatherService()
     {
         // Identifies the app (and where to reach its author), as OpenStreetMap's Nominatim policy requires.
-        Http.DefaultRequestHeaders.UserAgent.ParseAdd($"D-Island/{UpdateService.CurrentVersion} (+https://github.com/H7gamer/d-island)");
+        Http.DefaultRequestHeaders.UserAgent.ParseAdd($"Hoshino-Island/{UpdateService.CurrentVersion} (+https://github.com/Takayom1/Dynamic-insland)");
     }
 
     public WeatherService(AppSettings settings)

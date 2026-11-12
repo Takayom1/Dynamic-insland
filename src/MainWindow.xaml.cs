@@ -109,7 +109,7 @@ public partial class MainWindow : Window
     {
         StartupMark("window constructor");
         _settings = settings;
-        _fullscreenDetector=fullscreenDetector??FullscreenService.Inspect;
+        _fullscreenDetector=fullscreenDetector??(()=>FullscreenService.Inspect(_settings.MonitorDeviceName));
         _notch.Reset(IsNotch ? 1 : 0);
         _weather = new WeatherService(settings);
         _calendar = new CalendarService(settings);
@@ -142,8 +142,9 @@ public partial class MainWindow : Window
         };
         _lyricsPanel.CompactChanged += UpdateCompactLyric;
         _aiPanel.TypingRequested += BeginTyping;
-        VoiceFocusHoshino.Content=new HoshinoCompanion(settings){Listening=()=>_aiPanel.IsListening,Working=()=>AssistantRuntime.Busy||_aiPanel.PreparingVoice,Playing=()=>_aiPanel.IsSpeaking};
+        VoiceFocusHoshino.Content=new HoshinoCompanion(settings){Listening=()=>_aiPanel.IsListening,Working=()=>AssistantRuntime.Busy||_aiPanel.PreparingVoice||_aiPanel.IsTranscribing,Playing=()=>_aiPanel.IsSpeaking};
         _aiPanel.VoiceActivated+=BeginVoiceFocus;
+        _aiPanel.ActivityChanged+=text=>{VoiceActivityText.Text=text;VoiceActivityText.ToolTip=text;};
         _aiPanel.VoiceStateChanged+=()=>{if(!IsLoaded)return;if(_voiceFocus&&!_aiPanel.VoiceInteraction)EndVoiceFocus();UpdatePrivacyIndicators();};
         PrivacyChip.ToolTip="Нажмите, чтобы выключить голосовую активацию";
         PrivacyChip.MouseLeftButtonUp+=(_,e)=>{if(_aiPanel.MicrophoneActive)_aiPanel.DisableWake();e.Handled=true;};
@@ -256,7 +257,7 @@ public partial class MainWindow : Window
         InitMotionArtwork();
         LocationChanged += (_, _) => SyncGpuBounds();
         SizeChanged += (_, _) => SyncGpuBounds();
-        DpiChanged += (_, _) => SyncGpuBounds();
+        DpiChanged += (_, _) => {SyncGpuBounds();Dispatcher.BeginInvoke(Reposition);};
 
         SourceInitialized += OnSourceInitialized;
         Loaded += OnLoaded;
@@ -268,6 +269,7 @@ public partial class MainWindow : Window
 
     /// <summary>The gear button or a right-click on the island asked for the settings window.</summary>
     public event Action? SettingsRequested;
+    internal bool CanRestartForDevelopment=>!_typing&&!AssistantRuntime.Busy&&!_timer.IsActive&&!_stopwatch.IsActive&&!_aiPanel.IsListening&&!_aiPanel.IsTranscribing&&!_aiPanel.IsCalibrating&&!_aiPanel.IsSpeaking&&!_aiPanel.PreparingVoice&&string.IsNullOrWhiteSpace(_aiPanel.Input.Text);
 
     /// <summary>Hidden with the shortcut or the tray menu: nothing shows, alerts included.</summary>
     public bool IslandHidden { get; private set; }
@@ -358,7 +360,7 @@ public partial class MainWindow : Window
             : null;
         _keyboard.Update();
         _settings.HotkeyProblem = _keyboard.Shortcut is not null
-            ? $"Another app also uses {text}. D-Island still responds to it, but that app may react too. Pick another shortcut to avoid that."
+            ? $"Another app also uses {text}. Hoshino Island still responds to it, but that app may react too. Pick another shortcut to avoid that."
             : problem;
     }
 
@@ -611,7 +613,7 @@ public partial class MainWindow : Window
     {
         if (App.Updates is not { } updates) return;
 
-        // "D-Island updated" in the island and the What's New window, once, on the first start after an
+        // "Hoshino Island updated" in the island and the What's New window, once, on the first start after an
         // update (automatic, or a newer installer run by hand; not on a fresh install).
         var current = UpdateService.CurrentVersion;
         var updatedFrom = Version.TryParse(_settings.LastRunVersion, out var last) && last < current ? last : null;
@@ -622,7 +624,7 @@ public partial class MainWindow : Window
         if (updatedFrom is not null)
         {
             _ = ShowWhatsNewSoonAsync(updatedFrom);
-            _ = Task.Delay(3000).ContinueWith(_ => ShowInfo(TransientPriority.Calendar, 300, "", "D-Island updated",
+            _ = Task.Delay(3000).ContinueWith(_ => ShowInfo(TransientPriority.Calendar, 300, "", "Hoshino Island updated",
                     $"Version {current}", detailBrush: (Brush)FindResource("Green"), seconds: 5),
                 TaskScheduler.FromCurrentSynchronizationContext());
         }
@@ -804,8 +806,11 @@ public partial class MainWindow : Window
 
     private void Reposition()
     {
-        Left = (SystemParameters.PrimaryScreenWidth - Width) / 2;
-        Top = _settings.TopOffset;
+        var screen=FullscreenService.TargetScreen(_settings.MonitorDeviceName);var bounds=screen.Bounds;var hwnd=new WindowInteropHelper(this).Handle;
+        if(hwnd==IntPtr.Zero){Left=(SystemParameters.PrimaryScreenWidth-Width)/2;Top=_settings.TopOffset;return;}
+        var dpi=VisualTreeHelper.GetDpi(this);if(!NativeMethods.GetWindowRect(hwnd,out var rect))return;
+        var left=bounds.Left+(bounds.Width-(rect.Right-rect.Left))/2;var top=bounds.Top+(int)Math.Round(_settings.TopOffset*dpi.DpiScaleY);
+        if(rect.Left!=left||rect.Top!=top)NativeMethods.SetWindowPos(hwnd,IntPtr.Zero,left,top,0,0,NativeMethods.SWP_NOSIZE|NativeMethods.SWP_NOZORDER|NativeMethods.SWP_NOACTIVATE);
     }
 
     // ---------------------------------------------------------------- rendering
@@ -819,7 +824,7 @@ public partial class MainWindow : Window
 
         if (_voiceFocus)
         {
-            view=VoiceFocusView;width=320;height=220;radius=IsNotch?NotchExpandedRadius:IslandExpandedRadius;
+            view=VoiceFocusView;width=320;height=250;radius=IsNotch?NotchExpandedRadius:IslandExpandedRadius;
         }
         else if (_state.IsExpanded)
         {
@@ -954,7 +959,7 @@ public partial class MainWindow : Window
     {
         _voiceFocus=false;_voiceChatOpen=true;_msOutside=0;OpenAiChat();UpdateSecondActivity();UpdateGameMode();
     }
-    private void OnVoiceFocusClick(object sender,MouseButtonEventArgs e){_voiceFocus=false;OpenAiChat();e.Handled=true;}
+    private void OnVoiceFocusClick(object sender,MouseButtonEventArgs e){_voiceFocus=false;_voiceChatOpen=true;OpenAiChat();e.Handled=true;}
     private void OnHomeLyricsToggle(object sender, RoutedEventArgs e) => _lyricsPanel.ToggleCompact();
 
     public void OpenAiChat()
