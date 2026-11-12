@@ -39,7 +39,7 @@ public sealed class AssistantVoice : IDisposable
     public event Action<double>? AudioLevel;
     public string CurrentStatus {get;private set;}="Микрофон выключен";
     private void Report(string text){CurrentStatus=text;Status?.Invoke(text);WriteDiagnostics();}
-    public object Diagnostics()=>new {Waiting,Listening,Calibrating,busy,speaking,InteractionActive,lowPower,sessionPaused,Phrase=WakeProfile.SelectedPhrase,Status=CurrentStatus,SecondsSinceAudio=lastAudio==0?-1:(System.Diagnostics.Stopwatch.GetTimestamp()-Interlocked.Read(ref lastAudio))/(double)System.Diagnostics.Stopwatch.Frequency};
+    public object Diagnostics()=>new {Waiting,Listening,Calibrating,busy,speaking,InteractionActive,lowPower,sessionPaused,Phrase=WakeProfile.SelectedPhrase,Phase=Calibrating?"calibration":Listening?"command":Waiting?"wake":speaking?"speech":busy?"assistant":"idle",SecondsSinceAudio=lastAudio==0?-1:(System.Diagnostics.Stopwatch.GetTimestamp()-Interlocked.Read(ref lastAudio))/(double)System.Diagnostics.Stopwatch.Frequency};
     private void WriteDiagnostics(){try{Directory.CreateDirectory(AssistantPreferences.DataDirectory);File.WriteAllText(Path.Combine(AssistantPreferences.DataDirectory,"voice-status.json"),JsonSerializer.Serialize(Diagnostics()));}catch(IOException){}catch(UnauthorizedAccessException){}}
     public record Microphone(int Id,string Name) { public override string ToString()=>Name; }
     public static Microphone[] Microphones()=>new[]{new Microphone(-1,"Системный микрофон по умолчанию")}.Concat(Enumerable.Range(0,WaveIn.DeviceCount).Select(i=>new Microphone(i,WaveIn.GetCapabilities(i).ProductName))).ToArray();
