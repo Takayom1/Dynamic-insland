@@ -65,6 +65,7 @@ internal sealed class GpuBlurBackdrop : IDisposable
     private NativeMethods.RECT _bounds;
     private bool _visible = true;
     private (float X, float Y, float W, float H, float R, float Blur, float Opacity) _shape;
+    private (int Left, int Top, int Right, int Bottom, int Diameter)? _inputRegion;
 
     private sealed record Layer(IntPtr Hwnd, IntPtr Thumbnail, IDCompositionVisual2 Visual)
     {
@@ -104,6 +105,7 @@ internal sealed class GpuBlurBackdrop : IDisposable
         _target.SetRoot(_root);
         _device.Commit();
 
+        UpdateWindowRegion(0, 0, 0, 0, 0);
         NativeMethods.ShowWindow(_hwnd, NativeMethods.SW_SHOWNOACTIVATE);
     }
 
@@ -199,6 +201,10 @@ internal sealed class GpuBlurBackdrop : IDisposable
         var shape = (x, y, width, height, radius, blurRadius, opacity);
         if (shape == _shape) return; // skip redundant commits while idle
         _shape = shape;
+        // DirectComposition clips pixels, not the native HWND's input area. HTTRANSPARENT alone
+        // only forwards hit tests within a thread: other applications still hit the full rectangle.
+        // Give Windows the same physical-pixel region as the glass, including during morphs.
+        UpdateWindowRegion(x, y, opacity > 0 ? width : 0, opacity > 0 ? height : 0, radius);
 
         _clip.SetLeft(x);
         _clip.SetTop(y);
@@ -217,6 +223,32 @@ internal sealed class GpuBlurBackdrop : IDisposable
         _root3?.SetOpacity(Math.Clamp(opacity, 0, 1));
         _device.Commit();
     }
+
+    private void UpdateWindowRegion(float x, float y, float width, float height, float radius)
+    {
+        (int Left, int Top, int Right, int Bottom, int Diameter) region = width <= 0 || height <= 0
+            ? (0, 0, 0, 0, 0)
+            : ((int)Math.Floor(x), (int)Math.Floor(y), (int)Math.Ceiling(x + width),
+                (int)Math.Ceiling(y + height), (int)Math.Ceiling(2 * Math.Clamp(radius, 0, Math.Min(width, height) / 2)));
+        if (_inputRegion == region) return;
+        var handle = CreateRoundRectRgn(region.Left, region.Top, region.Right, region.Bottom, region.Diameter, region.Diameter);
+        if (handle == IntPtr.Zero) throw new System.ComponentModel.Win32Exception();
+        // On success Windows owns HRGN, including replacement/disposal. Only failures are ours.
+        if (SetWindowRgn(_hwnd, handle, true) == 0)
+        {
+            DeleteObject(handle);
+            throw new System.ComponentModel.Win32Exception();
+        }
+        _inputRegion = region;
+    }
+
+    [DllImport("gdi32.dll", SetLastError = true)]
+    private static extern IntPtr CreateRoundRectRgn(int left, int top, int right, int bottom, int ellipseWidth, int ellipseHeight);
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern int SetWindowRgn(IntPtr hwnd, IntPtr region, [MarshalAs(UnmanagedType.Bool)] bool redraw);
+    [DllImport("gdi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DeleteObject(IntPtr handle);
 
     public void Dispose()
     {
