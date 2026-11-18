@@ -27,7 +27,7 @@ public sealed class LocalVoiceWorker : IDisposable
         await serial.WaitAsync(cancel);Process? current=null;
         try {
             var p=AssistantPreferences.Current;
-            var options=new {neural=p.NeuralEnabled,neural_model=p.NeuralModel,speaker=p.NeuralSpeaker,rvc=p.RvcEnabled,engine=p.RvcEngine,rvc_model=p.RvcModel,index=p.RvcIndex,python=p.RvcPython,whisper_model=p.WhisperModel,language=p.RecognitionCulture.Split('-')[0]};
+            var options=new {neural=p.NeuralEnabled,neural_model=p.NeuralModel,speaker=p.NeuralSpeaker,rvc=p.RvcEnabled,engine=p.RvcEngine,rvc_model=p.RvcModel,index=p.RvcIndex,pitch=p.RvcPitch,index_rate=p.RvcIndexRate,protect=p.RvcProtect,python=p.RvcPython,whisper_model=p.WhisperModel,language=p.RecognitionCulture.Split('-')[0]};
             var key=JsonSerializer.Serialize(options);
             lock(lifecycle) {
                 ObjectDisposedException.ThrowIf(disposed,this);
@@ -35,7 +35,7 @@ public sealed class LocalVoiceWorker : IDisposable
                 current=process!;
                 if(action=="prepare"&&voiceReady||action=="prepare_asr"&&asrReady)return null;
             }
-            var request=new {action,options.neural,options.neural_model,options.speaker,options.rvc,options.engine,options.rvc_model,options.index,options.whisper_model,options.language,text_file=textFile,input,output};
+            var request=new {action,options.neural,options.neural_model,options.speaker,options.rvc,options.engine,options.rvc_model,options.index,options.pitch,options.index_rate,options.protect,options.whisper_model,options.language,text_file=textFile,input,output};
             await current.StandardInput.WriteLineAsync(JsonSerializer.Serialize(request).AsMemory(),cancel);
             while(await current.StandardOutput.ReadLineAsync(cancel) is { } line){
                 JsonDocument json;try{json=JsonDocument.Parse(line);}catch(JsonException){continue;}

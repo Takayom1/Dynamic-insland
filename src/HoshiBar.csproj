@@ -8,17 +8,17 @@
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <AssemblyName>HoshinoIsland</AssemblyName>
+    <AssemblyName>HoshiBar</AssemblyName>
     <RootNamespace>DIsland</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <ApplicationIcon>GlassDesk.ico</ApplicationIcon>
-    <Product>Hoshino Island</Product>
-    <Version>0.17.0</Version>
-    <Description>Hoshino Island — desktop companion and system assistant for Windows</Description>
+    <ApplicationIcon>HoshiBar.ico</ApplicationIcon>
+    <Product>HoshiBar</Product>
+    <Version>1.0.0</Version>
+    <Description>HoshiBar — desktop companion and system assistant for Windows</Description>
     <Authors>Takayom1; h7 (upstream)</Authors>
     <Company>Takayom1</Company>
-    <Copyright>Copyright (c) 2026 h7 (ibuildrigs). Licensed under the D-Island License 1.0.</Copyright>
-    <PackageProjectUrl>https://github.com/Takayom1</PackageProjectUrl>
+    <Copyright>Copyright (c) 2026 Takayom1; upstream portions Copyright (c) 2026 h7 (ibuildrigs), D-Island License 1.0.</Copyright>
+    <PackageProjectUrl>https://github.com/Takayom1/hoshibar</PackageProjectUrl>
     <!-- WinForms' DPI analyzer; WPF owns DPI here and reads it from app.manifest. -->
     <NoWarn>$(NoWarn);WFAC010</NoWarn>
 
@@ -49,13 +49,14 @@
   <!-- Sparse package (identity for notifications + Windows calendar): the manifest and the script
        that packs, signs and registers it, next to the exe. See Identity\setup-identity.ps1. -->
   <ItemGroup>
-    <None Include="Assets\**" CopyToOutputDirectory="PreserveNewest" />
+    <Resource Include="Assets\Fonts\*.ttf" />
+    <None Include="Assets\**" Exclude="Assets\Fonts\*.ttf" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Identity\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <!-- Licence, privacy statement and third-party notices travel with every build (Settings > About links them). -->
   <ItemGroup>
-    <None Include="Inno-Setup-LICENSE.txt;NAudio-LICENSE.txt;Vosk-LICENSE.txt;Speech-Model-LICENSE.txt;LICENSE-HOSHINO-MIT.txt;LICENSING.md;GlassDesk.ico;Speech-LICENSE.txt;Speech-NOTICES.txt;LICENSE.txt;NOTICE.txt;PRIVACY.txt;THIRD-PARTY-NOTICES.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Inno-Setup-LICENSE.txt;NAudio-LICENSE.txt;Vosk-LICENSE.txt;Speech-Model-LICENSE.txt;LICENSE-HOSHIBAR-MIT.txt;LICENSING.md;HoshiBar.ico;Speech-LICENSE.txt;Speech-NOTICES.txt;LICENSE.txt;NOTICE.txt;PRIVACY.txt;THIRD-PARTY-NOTICES.txt" CopyToOutputDirectory="PreserveNewest" />
     <!-- Repository files that aren't part of the app. -->
     <None Remove=".github\**" />
     <Compile Remove=".github\**" />

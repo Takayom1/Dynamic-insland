@@ -3,6 +3,7 @@
 
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using System.Windows.Threading;
@@ -10,37 +11,41 @@ using DIsland.Services;
 
 namespace DIsland;
 
-/// <summary>Edits <see cref="AppSettings"/> live: every change is applied to the island immediately.</summary>
+/// <summary>
+/// Two-pane skin-adaptive SettingsWindow ("Твой остров") across all 5 visual skins
+/// (Horus Glass, Shittim Chest, Win7 Aero, Chibi Pop, Pixel Tamagotchi).
+/// Preserves all core, T01, T02, T03, and Ghost/Tray settings with live preview.
+/// </summary>
 public partial class SettingsWindow : Window
 {
-    private static readonly Brush Secondary = Frozen(Color.FromArgb(0x99, 0xFF, 0xFF, 0xFF));
-    private static readonly Brush Faint = Frozen(Color.FromArgb(0x80, 0xFF, 0xFF, 0xFF));
-    private static readonly Brush Hover = Frozen(Color.FromArgb(0x26, 0xFF, 0xFF, 0xFF));
-    private static readonly Brush Selected = Frozen(Color.FromArgb(0x3A, 0xFF, 0xFF, 0xFF));
+    private static Brush Secondary => (Brush?)Application.Current?.Resources["HoshinoMuted"] ?? Frozen(Color.FromArgb(0x99, 0xFF, 0xFF, 0xFF));
+    private static Brush Faint => (Brush?)Application.Current?.Resources["HoshinoMuted"] ?? Frozen(Color.FromArgb(0x80, 0xFF, 0xFF, 0xFF));
+    private static Brush Hover => (Brush?)Application.Current?.Resources["HoshinoControlHover"] ?? Frozen(Color.FromArgb(0x26, 0xFF, 0xFF, 0xFF));
 
-    /// <summary>"1.0.0", from the assembly version (csproj &lt;Version&gt;).</summary>
     private static readonly string AppVersion =
-        typeof(SettingsWindow).Assembly.GetName().Version is { } v ? $"{v.Major}.{v.Minor}.{v.Build}" : "";
-
-    private static readonly string[] Swatches =
-    {
-        "#0A84FF", "#5E5CE6", "#BF5AF2", "#FF375F", "#FF9F0A", "#FFD60A", "#30D158", "#64D2FF",
-    };
-
-    private static readonly (string Family, string Label)[] Fonts =
-    {
-        ("Segoe UI Variable Text", "Segoe UI Variable"),
-        ("Segoe UI", "Segoe UI"),
-        ("Helvetica", "Helvetica"),
-        ("Bahnschrift", "Bahnschrift"),
-        ("Cascadia Mono", "Cascadia Mono"),
-    };
+        typeof(SettingsWindow).Assembly.GetName().Version is { } v ? $"{v.Major}.{v.Minor}.{v.Build}" : "0.17.0";
 
     private readonly AppSettings _settings;
     private readonly DispatcherTimer _saveTimer = new() { Interval = TimeSpan.FromMilliseconds(400) };
-    private StackPanel? _materialOptions;
+    private readonly List<NavEntry> _nav = new();
+
+    private StackPanel? _horusPaletteOptions;
+    private StackPanel? _quickAppsPanel;
+    private IReadOnlyList<InstalledApp>? _installedApps;
+    private Action? _previewRefresh;
+    private Action? _updateStatusRefresh;
+    private string _selectedSectionKey = "Appearance";
     private bool _loading;
     private int _groupId;
+
+    private sealed record NavEntry(
+        string Key,
+        string Title,
+        Grid PageWrapper,
+        Border NavPill,
+        Border NavShadow,
+        TextBlock NavLabel,
+        ContentControl NavIconHost);
 
     public SettingsWindow(AppSettings settings)
     {
@@ -56,344 +61,628 @@ public partial class SettingsWindow : Window
         Closed += (_, _) =>
         {
             _settings.Save();
-            if (_updateStatusRefresh is not null && App.Updates is { } updates) updates.Changed -= _updateStatusRefresh;
+            if (_updateStatusRefresh is not null && App.Updates is { } updates)
+                updates.Changed -= _updateStatusRefresh;
         };
+
         WheelScrolling.Attach(SettingsScroller, pixelsPerNotch: 36);
         WheelScrolling.Attach(NavScroller, pixelsPerNotch: 36);
-        SettingsScroller.ScrollChanged += (_, _) => UpdateNavSelection();
-        Loaded += (_, _) => UpdateNavSelection();
-
-        CategorySelector.SelectionChanged+=(_,_)=> {
-            if(CategorySelector.SelectedItem is ComboBoxItem selected && selected.Tag is TextBlock header)
-            { var entry=_nav.FirstOrDefault(n=>n.Header==header); if(entry.Item is not null) SelectSection(header,entry.Item); }
-        };
+        SourceInitialized += (_, _) => ApplyWindowThemeChrome();
+        SizeChanged += (_, _) => DwmWindowBlur.Apply(this, IslandSkinEngine.Current, cornerRadiusDip: 12);
+        StateChanged += (_, _) => ApplyWindowThemeChrome();
         Build();
     }
 
-    // ---------------------------------------------------------------- layout
+    private static MainWindow? GetMainWindow() =>
+        Application.Current?.Windows.OfType<MainWindow>().FirstOrDefault();
+
+    private void OnHeaderMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ClickCount == 2)
+        {
+            WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+            e.Handled = true;
+            return;
+        }
+        if (e.LeftButton == MouseButtonState.Pressed)
+        {
+            if (WindowState == WindowState.Maximized)
+                WindowState = WindowState.Normal;
+            try { DragMove(); }
+            catch (InvalidOperationException) { }
+        }
+    }
+
+    private void OnResizeThumbDragDelta(object sender, System.Windows.Controls.Primitives.DragDeltaEventArgs e)
+    {
+        if (WindowState == WindowState.Maximized) return;
+        Width = Math.Max(MinWidth, Width + e.HorizontalChange);
+        Height = Math.Max(MinHeight, Height + e.VerticalChange);
+    }
+
+    private void ApplyWindowThemeChrome()
+    {
+        HoshinoPalette.Apply(_settings);
+        SettingsSkinPresenter.ApplyWindowChrome(
+            this, WindowOuterGrid, WindowCartoonShadow, RootShell, HeaderBar, TopAccentBar,
+            HeaderTitleText, CaptionButtonsHost, BgChromeCanvas, SidebarPane, FooterBar, DoneButton, _settings);
+        RefreshNavStyles();
+        _previewRefresh?.Invoke();
+    }
+
+    // ---------------------------------------------------------------- 2-pane build
 
     private void Build()
     {
         _loading = true;
         Sections.Children.Clear();
         Nav.Children.Clear();
-        CategorySelector.Items.Clear();
         _nav.Clear();
-        _navSelected = null;
         var s = _settings;
 
-        var design = Section("Хошино и оформление");
-        var hero = new DockPanel { Margin = new Thickness(0,0,0,20) };
-        var companion = new HoshinoCompanion(s) { Width=100, Height=100 };
-        DockPanel.SetDock(companion, Dock.Right); hero.Children.Add(companion);
-        var welcome = new StackPanel { VerticalAlignment=VerticalAlignment.Center };
-        welcome.Children.Add(new TextBlock { Text="Hoshino Island", FontSize=26, FontWeight=FontWeights.SemiBold });
-        welcome.Children.Add(new TextBlock { Text="Твой спокойный уголок на рабочем столе.", TextWrapping=TextWrapping.Wrap, Opacity=.65, Margin=new Thickness(0,8,12,0) });
-        hero.Children.Add(welcome); design.Children.Add(hero);
-        Choice(design, "Палитра", new[] { ("Hoshino", "Хошино"), ("Graphite", "Графит"), ("Abydos", "Абидос"), ("Custom", "Своя") }, () => s.DesignPreset, v => { s.DesignPreset=v; HoshinoPalette.Apply(s); });
-        Note(design, "Розовый, небесный и золотой — цвета Хошино. Выбери настроение острова.");
-        CustomDesignColors(design);
-        Check(design, "Показывать Хошино", () => s.ShowHoshino, v => s.ShowHoshino=v);
-        Check(design, "Живые состояния: сон, музыка и микрофон", () => s.AnimateHoshino, v => s.AnimateHoshino=v);
-        Check(design, "Следить глазами за курсором", () => s.HoshinoFollowsCursor, v => s.HoshinoFollowsCursor=v);
-        Check(design, "Уменьшить анимации", () => s.ReduceMotion, v => s.ReduceMotion=v);
-        Check(design, "Компактные отступы", () => s.CompactDesign, v => s.CompactDesign=v);
-        Slider(design, "Размер Хошино в чате", 72,140,4, () => s.CompanionSize, v => s.CompanionSize=v, v=>$"{v:0} px");
-        Slider(design, "Ширина раскрытого островка",440,640,20,()=>s.PanelWidth,v=>s.PanelWidth=v,v=>$"{v:0} px");
-        Slider(design, "Размер обложки",64,112,8,()=>s.CoverSize,v=>s.CoverSize=v,v=>$"{v:0} px");
-        var lyricDesign=Section("Оформление лирики");
-        Note(lyricDesign, "Автоматический поиск и провайдеры остаются включены. Здесь меняется только отображение.");
-        Slider(lyricDesign,"Ширина островка с лирикой",300,620,20,()=>s.CompactLyricWidth,v=>s.CompactLyricWidth=v,v=>$"{v:0} px");
-        Slider(lyricDesign,"Текст на островке",12,22,1,()=>s.LyricFontSize,v=>s.LyricFontSize=v,v=>$"{v:0} pt");
-        Slider(lyricDesign,"Текст в плеере",12,24,1,()=>s.ExpandedLyricFontSize,v=>s.ExpandedLyricFontSize=v,v=>$"{v:0} pt");
-        Slider(lyricDesign,"Яркость соседних строк",.15,.75,.05,()=>s.LyricInactiveOpacity,v=>s.LyricInactiveOpacity=v,v=>$"{v*100:0}%");
-        Check(lyricDesign,"Две строки на островке",()=>s.TwoLineLyrics,v=>s.TwoLineLyrics=v);
-        Check(lyricDesign,"Центрировать текст на островке",()=>s.CenterLyrics,v=>s.CenterLyrics=v);
-        var obsidian = Section("Obsidian · память и синхронизация");
-        obsidian.Children.Add(new ObsidianSettingsPanel());
-        var assistant = Section("ASSISTANT");
-        assistant.Children.Add(new AssistantSettingsPanel());
-        var style = Section("STYLE");
-        Choice(style, "Shape", new[] { (IslandMode.DynamicIsland, "Dynamic Island"), (IslandMode.Notch, "Notch") },
-            () => s.Mode, v => s.Mode = v);
-        Slider(style, "Size", 0.75, 1.5, 0.05, () => s.IslandScale, v => s.IslandScale = v, v => $"{v * 100:0}%");
-        Slider(style, "Corner roundness", 0.2, 1, 0.05, () => s.CornerRoundness, v => s.CornerRoundness = v, v => $"{v * 100:0}%");
-        Slider(style, "Outline width", 0, 3, 0.25, () => s.OutlineWidth, v => s.OutlineWidth = v, v => v == 0 ? "Off" : $"{v:0.##} px");
-        Slider(style, "Outline opacity", 0, 1, 0.05, () => s.OutlineOpacity, v => s.OutlineOpacity = v, v => $"{v * 100:0}%");
-        Slider(style, "Shadow", 0, 1, 0.05, () => s.ShadowStrength, v => s.ShadowStrength = v, v => v == 0 ? "Off" : $"{v * 100:0}%");
-        Check(style, "Text shadow on see-through materials (keeps text readable)", () => s.TextShadow, v => s.TextShadow = v);
+        HoshinoPalette.Apply(s);
 
-        var material = Section("MATERIAL");
-        Choice(material, null, new[]
+        // 1. Оформление и скины
+        var appearance = CreatePage("Appearance", "Оформление", "Пять визуальных тем, палитры Хошино, аксессуары и часы.");
+        var (previewCard, refreshPreview) = SettingsSkinPresenter.CreateLivePreviewCard(s);
+        _previewRefresh = refreshPreview;
+        appearance.Children.Add(previewCard);
+
+        var skinCard = SubCard(appearance, "Скин острова и окон");
+        skinCard.Children.Add(SettingsSkinPresenter.BuildSkinSelectorGrid(s, picked =>
         {
-            (IslandMaterial.Opaque, "Opaque"),
-            (IslandMaterial.Translucent, "Translucent"),
-            (IslandMaterial.LiquidGlass, "Liquid Glass"),
-        }, () => s.Material, v => s.Material = v, rebuildMaterialOptions: true);
-        _materialOptions = new StackPanel();
-        material.Children.Add(_materialOptions);
-        BuildMaterialOptions();
+            Update(() => s.IslandSkin = picked);
+            Build();
+        }));
+        _horusPaletteOptions = new StackPanel();
+        skinCard.Children.Add(_horusPaletteOptions);
+        BuildHorusPaletteOptions();
 
-        var adaptive = Section("ADAPTIVE BACKGROUND");
-        Check(adaptive, "Fade over the desktop; use the full material when an app is behind the island",
-            () => s.AdaptiveBackground, v => s.AdaptiveBackground = v);
-        Slider(adaptive, "Opacity over desktop", 0, 1, 0.05, () => s.DesktopOpacity, v => s.DesktopOpacity = v, v => $"{v * 100:0}%");
-        Check(adaptive, "Always use the full material while expanded", () => s.SolidWhenExpanded, v => s.SolidWhenExpanded = v);
-
-        var colors = Section("COLORS");
-        Choice(colors, "Accent", new[]
+        var accCard = SubCard(appearance, "Образ и атмосфера");
+        Choice(accCard, "Аксессуар Хошино", HoshinoAccessories.Choices, () => s.HoshinoAccessory, v =>
         {
-            (AccentSource.Auto, "Auto"),
-            (AccentSource.MediaApp, "Media app"),
-            (AccentSource.Custom, "Custom"),
-            (AccentSource.Monochrome, "Mono"),
-        }, () => s.AccentSource, v => s.AccentSource = v);
+            s.HoshinoAccessory = v;
+            _previewRefresh?.Invoke();
+        });
+        Check(accCard, "Тематические обложки треков (CD-диск Aero / Винил Chibi / Кассета Pixel)", () => s.ThemedMediaCovers, v => s.ThemedMediaCovers = v);
+        Check(accCard, "Погодная кромка острова (снежный иней и капли дождя)", () => s.WeatherRimEnabled, v => s.WeatherRimEnabled = v);
 
-        CustomColorRow(colors);
-        Slider(colors, "Background tint", 0, 0.5, 0.02, () => s.BackgroundTint, v => s.BackgroundTint = v, v => v == 0 ? "Off" : $"{v * 100:0}%");
-
-        var text = Section("TEXT & CLOCK");
-        Choice(text, "Font", Fonts.Select(f => (f.Family, f.Label)).ToArray(), () => s.FontFamily, v => s.FontFamily = v);
-        Choice(text, "Clock", new[]
+        var clockCard = SubCard(appearance, "Часы и капсула покоя");
+        Note(clockCard, "Шрифт и физика прозрачности / размытия подбираются автоматически под выбранную тему.");
+        Choice(clockCard, "Формат времени", new[]
         {
-            (ClockFormat.System, "System"),
-            (ClockFormat.TwelveHour, "12-hour"),
-            (ClockFormat.TwentyFourHour, "24-hour"),
+            (ClockFormat.System, "Системный"),
+            (ClockFormat.TwelveHour, "12 часов"),
+            (ClockFormat.TwentyFourHour, "24 часа"),
         }, () => s.ClockFormat, v => s.ClockFormat = v);
-        Check(text, "Show seconds", () => s.ShowSeconds, v => s.ShowSeconds = v);
-        Check(text, "Show the date in the idle pill", () => s.ShowDateWhenIdle, v => s.ShowDateWhenIdle = v);
-        Choice(text, "When idle", new[] { (IdleStyle.Clock, "Show clock"), (IdleStyle.Minimal, "Minimal pill") },
-            () => s.IdleStyle, v => s.IdleStyle = v);
-
-        var interaction = Section("INTERACTION");
-        Choice(interaction,"Монитор острова",new[]{("","Основной монитор")}.Concat(System.Windows.Forms.Screen.AllScreens.Select((screen,i)=>(screen.DeviceName,$"Экран {i+1}"+(screen.Primary?" · основной":"")))).ToArray(),()=>s.MonitorDeviceName,v=>s.MonitorDeviceName=v);
-        Check(interaction,"Игровой режим · скрывать остров поверх полноэкранных приложений",()=>s.GameModeEnabled,v=>s.GameModeEnabled=v);
-        Note(interaction,"Останавливает анимации, лирику и захват фона, освобождает модели голоса и GPU. Выбранная фраза продолжает работать; для ответа модели загрузятся заново.");
-        Check(interaction, "Expand on hover (click always works)", () => s.ExpandOnHover, v => s.ExpandOnHover = v);
-        Slider(interaction, "Hover delay", 0, 1000, 10, () => s.HoverDelayMs, v => s.HoverDelayMs = (int)v, v => $"{v:0} ms");
-        Slider(interaction, "Collapse delay", 0, 1500, 10, () => s.CollapseDelayMs, v => s.CollapseDelayMs = (int)v, v => $"{v:0} ms");
-
-        var animation = Section("ANIMATION");
-        Slider(animation, "Speed", 0.5, 2.5, 0.1, () => s.AnimationSpeed, v => s.AnimationSpeed = v, v => $"{v:0.0}×");
-        Slider(animation, "Bounciness", 0, 1, 0.05, () => s.Bounciness, v => s.Bounciness = v, v => $"{v * 100:0}%");
-
-        var media = Section("MEDIA");
-        Check(media, "Show album art banner when expanded", () => s.ShowArtBanner, v => s.ShowArtBanner = v);
-        Check(media, "Animated album art from Apple Music", () => s.MotionArtwork, v => s.MotionArtwork = v);
-        Note(media,
-            "Plays an album's looping motion artwork, when it has one, in the banner while expanded (works for " +
-            "Spotify too if the album is on Apple Music). Uses Apple's unofficial web-player access, the same as " +
-            "open-source downloaders, so it may stop working if Apple changes it. Each album is fetched once and " +
-            "cached (up to 200 MB).");
-
-        var activities = Section("ACTIVITIES");
-        Check(activities, "Show a second activity as a bubble beside the island (e.g. music while a timer runs)",
-            () => s.ShowSecondActivity, v => s.ShowSecondActivity = v);
-        Check(activities, "Music bars follow the actual sound", () => s.RealWaveform, v => s.RealWaveform = v);
-        Check(activities, "Clicking the music activity opens the music app (hover still expands)",
-            () => s.ClickOpensMediaApp, v => s.ClickOpensMediaApp = v);
-
-        var alarms = Section("ALARMS");
-        AlarmList(alarms);
-
-        var pages = Section("EXPANDED ISLAND");
-        Choice(pages, "Navigation", new[] { (PageNavigation.Tabs, "Tabs"), (PageNavigation.Dots, "Page dots") },
-            () => s.PageNavigation, v => s.PageNavigation = v);
-        Note(pages, "The expanded island has pages: Home, Notifications, Calendar, To-Do, Notes, Shelf, Weather, Apps, " +
-                    " Turn pages on or off in their sections below. " +
-                    "Click a tab or dot, or scroll the mouse wheel over the island to switch.");
-        Check(pages, "Show when an app is using the microphone or camera", () => s.PrivacyIndicator, v => s.PrivacyIndicator = v);
-
-        var identity = Section("NOTIFICATIONS & WINDOWS CALENDAR", navLabel: "Notifications");
-        IdentityStatus(identity);
-        Check(identity, "Show other apps' notifications in the island", () => s.NotificationsEnabled, v => s.NotificationsEnabled = v);
-        Check(identity, "Hide the message text (show only which app)", () => s.NotificationsHideText, v => s.NotificationsHideText = v);
-        Slider(identity, "Notification alerts", 2, 12, 0.5, () => s.NotificationSeconds, v => s.NotificationSeconds = v, v => $"{v:0.0} s");
-        Note(identity, "Alerts are held back while Do Not Disturb is on, like Windows does.");
-
-        var calendar = Section("CALENDAR");
-        Check(calendar, "Show the Calendar page", () => s.CalendarEnabled, v => s.CalendarEnabled = v);
-        Check(calendar, "Include calendars added to Windows (Outlook, Calendar app accounts)", () => s.WindowsCalendar, v => s.WindowsCalendar = v);
-        IcsLinks(calendar);
-        Choice(calendar, "Remind me", new[] { (0, "Off"), (1, "1 min"), (5, "5 min"), (10, "10 min"), (15, "15 min") },
-            () => s.CalendarReminderMinutes, v => s.CalendarReminderMinutes = v);
-
-        var notes = Section("TO-DO & NOTES", navLabel: "To-Do & Notes");
-        Check(notes, "Show the To-Do page", () => s.TodoEnabled, v => s.TodoEnabled = v);
-        Check(notes, "Show the Notes page", () => s.NotesEnabled, v => s.NotesEnabled = v);
-        Note(notes, "Click a text box in the island to type; press Esc or click anywhere else to give the keyboard " +
-                    "back. Tasks and notes are saved only on this PC, as you type.");
-
-        var shelf = Section("FILE SHELF");
-        Check(shelf, "Show the Shelf page (drag files onto the island to keep them)", () => s.ShelfEnabled, v => s.ShelfEnabled = v);
-        Check(shelf, "Keep files on the shelf after dragging them out", () => s.ShelfKeepAfterDrag, v => s.ShelfKeepAfterDrag = v);
-        Note(shelf, "The shelf remembers where files are; it doesn't copy them. Double-click an item to open it.");
-
-        var weather = Section("WEATHER");
-        Check(weather, "Show the Weather page", () => s.WeatherEnabled, v => s.WeatherEnabled = v);
-        Choice(weather, "Location", new[] { (true, "My location"), (false, "A city") },
-            () => s.WeatherUseDeviceLocation, v => s.WeatherUseDeviceLocation = v);
-        CitySearch(weather);
-        Choice(weather, "Units", new[]
+        Choice(clockCard, "В режиме покоя", new[]
         {
-            (TemperatureUnit.Auto, "Auto"),
-            (TemperatureUnit.Celsius, "°C"),
-            (TemperatureUnit.Fahrenheit, "°F"),
-        }, () => s.TemperatureUnit, v => s.TemperatureUnit = v);
-        Check(weather, "Show the weather next to the clock", () => s.WeatherInIdlePill, v => s.WeatherInIdlePill = v);
-        Note(weather, "Forecasts from Open-Meteo (free, no account), and your town's name from OpenStreetMap. \"My location\" uses Windows location, rounded to " +
-                      "about 1 km before it's sent.");
+            (IdleStyle.Clock, "Часы и Хошино"),
+            (IdleStyle.Minimal, "Минимальная капсула"),
+        }, () => s.IdleStyle, v => s.IdleStyle = v);
+        Check(clockCard, "Показывать секунды", () => s.ShowSeconds, v => s.ShowSeconds = v);
+        Check(clockCard, "Показывать дату рядом с часами", () => s.ShowDateWhenIdle, v => s.ShowDateWhenIdle = v);
 
-        var quickApps = Section("QUICK APPS");
-        Note(quickApps, $"The Apps page. Up to {AppSettings.MaxQuickApps} apps from the Start menu.");
-        Slider(quickApps, "Icon size", 16, 48, 2, () => s.QuickAppIconSize, v => s.QuickAppIconSize = v, v => $"{v:0} px");
-        _quickAppsPanel = new StackPanel();
-        quickApps.Children.Add(_quickAppsPanel);
-        BuildQuickApps();
+        // 2. Остров, вырез и Режим «Призрак»
+        var islandGhost = CreatePage("IslandGhost", "Остров, вырез и Призрак", "Геометрия плавающего острова и верхнего выреза, экран и сквозной клик.");
+        var shapeCard = SubCard(islandGhost, "Форма и геометрия");
+        Choice(shapeCard, "Режим формы", new[]
+        {
+            (IslandMode.DynamicIsland, "Плавающий остров"),
+            (IslandMode.Notch, "Верхний вырез (Notch)"),
+        }, () => s.Mode, v =>
+        {
+            s.Mode = v;
+            _previewRefresh?.Invoke();
+        });
+        Check(shapeCard, "Периметр фокуса (живой таймер по кантику острова)", () => s.PerimeterFocusTimer, v => s.PerimeterFocusTimer = v);
+        Choice(shapeCard, "Монитор острова",
+            new[] { ("", "Основной монитор") }
+                .Concat(System.Windows.Forms.Screen.AllScreens.Select((screen, i) =>
+                    (screen.DeviceName, $"Экран {i + 1}" + (screen.Primary ? " · основной" : ""))))
+                .ToArray(),
+            () => s.MonitorDeviceName, v => s.MonitorDeviceName = v);
+        Note(shapeCard, "Размеры, пропорции и скругление острова зафиксированы строго по эталонному дизайну выбранной темы.");
+        Slider(shapeCard, "Отступ сверху экрана", 0, 120, 1, () => s.TopOffset, v => s.TopOffset = v, v => $"{v:0} px");
 
-        var alerts = Section("ALERTS");
-        Check(alerts, "Show when a device connects or disconnects (USB, Bluetooth, monitors)",
-            () => s.DeviceAlerts, v => s.DeviceAlerts = v);
-        Check(alerts, "Caps Lock / Num Lock", () => s.LockKeyAlerts, v => s.LockKeyAlerts = v);
-        Check(alerts, "Microphone muted, Energy Saver, Wi-Fi and VPN changes", () => s.StatusAlerts, v => s.StatusAlerts = v);
-        Check(alerts, "Do Not Disturb turning on or off", () => s.FocusAlerts, v => s.FocusAlerts = v);
-        Check(alerts, "Copied to clipboard", () => s.CopyAlerts, v => s.CopyAlerts = v);
-        Check(alerts, "Show the copied text in the alert", () => s.ClipboardPreview, v => s.ClipboardPreview = v);
-        Check(alerts, "Pasted (Ctrl+V or Shift+Insert)", () => s.PasteAlerts, v => s.PasteAlerts = v);
-        Note(alerts, "Password managers mark copied passwords as private; those are never shown. Pasting " +
-                     "from a right-click menu can't be detected.");
-        Slider(alerts, "Volume / brightness", 1, 5, 0.5, () => s.OsdSeconds, v => s.OsdSeconds = v, v => $"{v:0.0} s");
-        Slider(alerts, "Battery & device alerts", 1, 8, 0.5, () => s.AlertSeconds, v => s.AlertSeconds = v, v => $"{v:0.0} s");
+        var ghostCard = SubCard(islandGhost, "Режим «Призрак» (Click-Through)");
+        Note(ghostCard, "Пропускает 100% кликов и прокрутки мыши сквозь свёрнутый остров или вырез прямо во вкладки браузера, редактора и игры.");
+        BuildGhostModeControls(ghostCard);
 
-        var position = Section("POSITION");
-        Slider(position, "Top offset", 0, 120, 1, () => s.TopOffset, v => s.TopOffset = v, v => $"{v:0} px");
+        var motionCard = SubCard(islandGhost, "Наведение, игры и пружина");
+        Check(motionCard, "Игровой режим · скрывать остров поверх полноэкранных игр", () => s.GameModeEnabled, v => s.GameModeEnabled = v);
+        Check(motionCard, "Раскрывать при наведении курсора (клик работает всегда)", () => s.ExpandOnHover, v => s.ExpandOnHover = v);
+        Slider(motionCard, "Задержка раскрытия", 0, 1000, 10, () => s.HoverDelayMs, v => s.HoverDelayMs = (int)v, v => $"{v:0} мс");
+        Slider(motionCard, "Задержка сворачивания", 0, 1500, 10, () => s.CollapseDelayMs, v => s.CollapseDelayMs = (int)v, v => $"{v:0} мс");
+        Slider(motionCard, "Скорость анимации", 0.5, 2.5, 0.1, () => s.AnimationSpeed, v => s.AnimationSpeed = v, v => $"{v:0.0}×");
+        Slider(motionCard, "Упругость пружины", 0, 1, 0.05, () => s.Bounciness, v => s.Bounciness = v, v => $"{v * 100:0}%");
 
-        var system = Section("SYSTEM");
-        HotkeyRow(system);
-        Check(system, "Hide the Windows volume flyout", () => s.HideVolumeFlyout, v => s.HideVolumeFlyout = v);
-        var startup = new CheckBox { Content = "Start with Windows", IsChecked = StartupManager.IsEnabled };
+        // 3. Живая Хошино и Коворкинг
+        var hoshinoFocus = CreatePage("HoshinoFocus", "Живая Хошино и Фокус", "Поведение компаньона, поглаживание, мини-океанариум Абидоса и таймеры.");
+        var compCard = SubCard(hoshinoFocus, "Таканаши Хошино");
+        Check(compCard, "Показывать Хошино на островке", () => s.ShowHoshino, v => { s.ShowHoshino = v; _previewRefresh?.Invoke(); });
+        Check(compCard, "Показывать нимб Хошино", () => s.ShowHoshinoHalo, v => { s.ShowHoshinoHalo = v; _previewRefresh?.Invoke(); });
+        Check(compCard, "Поглаживание по макушке (румянец и тёплые реплики)", () => s.EnableHeadpat, v => s.EnableHeadpat = v);
+        Check(compCard, "Живые реакции: пружинящий хохолок под музыку, дрёма zZz и радость по задачам", () => s.AnimateHoshino, v => s.AnimateHoshino = v);
+        Check(compCard, "Следить гетерохромными глазами за курсором", () => s.HoshinoFollowsCursor, v => s.HoshinoFollowsCursor = v);
+        Check(compCard, "Мини-океанариум Абидоса в режиме покоя", () => s.AbydosAquarium, v => s.AbydosAquarium = v);
+        Check(compCard, "Уменьшить анимации (экономия энергии)", () => s.ReduceMotion, v => s.ReduceMotion = v);
+        Slider(compCard, "Размер Хошино в AI-чате", 72, 140, 4, () => s.CompanionSize, v => s.CompanionSize = v, v => $"{v:0} px");
+
+        var focusCard = SubCard(hoshinoFocus, "Вторая активность и будильники");
+        Check(focusCard, "Показывать вторую активность отдельным пузырьком / брелоком Тамагочи рядом с капсулой", () => s.ShowSecondActivity, v => s.ShowSecondActivity = v);
+        AlarmList(focusCard);
+
+        // 4. Музыка и Лирика LRC
+        var mediaLyrics = CreatePage("MediaLyrics", "Музыка и Лирика LRC", "Плеер, обложки треков и синхронный текст песен.");
+        var playerCard = SubCard(mediaLyrics, "Плеер и обложки");
+        Slider(playerCard, "Размер обложки в плеере", 64, 96, 4, () => s.CoverSize, v => s.CoverSize = v, v => $"{v:0} px");
+        Check(playerCard, "Полоски эквалайзера двигаются в такт реальному звуку", () => s.RealWaveform, v => s.RealWaveform = v);
+        Check(playerCard, "Клик по компактному плееру открывает музыкальное приложение", () => s.ClickOpensMediaApp, v => s.ClickOpensMediaApp = v);
+        Check(playerCard, "Показывать баннер обложки в раскрытом виде", () => s.ShowArtBanner, v => s.ShowArtBanner = v);
+        Check(playerCard, "Анимированные обложки Apple Music", () => s.MotionArtwork, v => s.MotionArtwork = v);
+
+        var lrcCard = SubCard(mediaLyrics, "Синхронная лирика LRC");
+        Note(lrcCard, "Включается кнопкой LRC в карточке плеера на главной вкладке.");
+        Slider(lrcCard, "Ширина капсулы с лирикой", 300, 620, 20, () => s.CompactLyricWidth, v => s.CompactLyricWidth = v, v => $"{v:0} px");
+        Slider(lrcCard, "Размер текста на островке", 12, 22, 1, () => s.LyricFontSize, v => s.LyricFontSize = v, v => $"{v:0} pt");
+        Slider(lrcCard, "Размер текста в раскрытом плеере", 12, 24, 1, () => s.ExpandedLyricFontSize, v => s.ExpandedLyricFontSize = v, v => $"{v:0} pt");
+        Slider(lrcCard, "Яркость соседних строк", 0.15, 0.75, 0.05, () => s.LyricInactiveOpacity, v => s.LyricInactiveOpacity = v, v => $"{v * 100:0}%");
+        Check(lrcCard, "Две строки на свёрнутом островке", () => s.TwoLineLyrics, v => s.TwoLineLyrics = v);
+        Check(lrcCard, "Центрировать строки лирики", () => s.CenterLyrics, v => s.CenterLyrics = v);
+
+        // 5. Системный трей и Уведомления
+        var traySystem = CreatePage("TraySystem", "Трей и Сигналы", "Иконочный Bento-пульт трея, жесты мыши, автозапуск и системные уведомления.");
+        var trayCard = SubCard(traySystem, "Системный трей Хошино");
+        Choice(trayCard, "Одиночный клик ЛКМ", new[]
+        {
+            ("Flyout", "Иконочный пульт"),
+            ("ToggleIsland", "Скрыть / показать"),
+            ("AiChat", "Открыть AI-чат"),
+            ("Settings", "Настройки"),
+        }, () => s.TrayLeftClickAction, v => s.TrayLeftClickAction = v);
+        Choice(trayCard, "Средний клик СКМ", new[]
+        {
+            ("PlayPause", "Play / Pause музыки"),
+            ("GhostMode", "Режим «Призрак»"),
+            ("ToggleIsland", "Скрыть / показать"),
+        }, () => s.TrayMiddleClickAction, v => s.TrayMiddleClickAction = v);
+        HotkeyRow(trayCard, "Скрыть / показать остров", () => s.ToggleHotkey, v => s.ToggleHotkey = v, () => s.HotkeyProblem);
+        Check(trayCard, "Скрыть стандартный ползунок громкости Windows", () => s.HideVolumeFlyout, v => s.HideVolumeFlyout = v);
+
+        var startup = new CheckBox { Content = "Запускать HoshiBar вместе с Windows", IsChecked = StartupManager.IsEnabled };
         startup.Click += (_, _) =>
         {
             try { StartupManager.SetEnabled(startup.IsChecked == true); }
-            catch (Exception) { /* registry write blocked by policy */ }
+            catch (Exception) { }
             startup.IsChecked = StartupManager.IsEnabled;
         };
-        system.Children.Add(startup);
+        trayCard.Children.Add(startup);
 
-        var updates = Section("UPDATES");
-        Check(updates,"Проверять обновления ежедневно",()=>s.CheckForUpdates,v=>s.CheckForUpdates=v);
-        UpdateControls(updates);
+        var alertsCard = SubCard(traySystem, "Системные сигналы острова");
+        Check(alertsCard, "Подключение и отключение устройств (USB, Bluetooth, мониторы)", () => s.DeviceAlerts, v => s.DeviceAlerts = v);
+        Check(alertsCard, "Индикация Caps Lock / Num Lock", () => s.LockKeyAlerts, v => s.LockKeyAlerts = v);
+        Check(alertsCard, "Статус микрофона, энергосбережения, Wi-Fi и VPN", () => s.StatusAlerts, v => s.StatusAlerts = v);
+        Check(alertsCard, "Режим «Не беспокоить» Windows", () => s.FocusAlerts, v => s.FocusAlerts = v);
+        Check(alertsCard, "Копирование в буфер обмена", () => s.CopyAlerts, v => s.CopyAlerts = v);
+        Check(alertsCard, "Показывать первую строку скопированного текста", () => s.ClipboardPreview, v => s.ClipboardPreview = v);
+        Check(alertsCard, "Вставка (Ctrl+V / Shift+Insert)", () => s.PasteAlerts, v => s.PasteAlerts = v);
+        Slider(alertsCard, "Длительность громкости / яркости", 1, 5, 0.5, () => s.OsdSeconds, v => s.OsdSeconds = v, v => $"{v:0.0} с");
+        Slider(alertsCard, "Длительность системных тостов", 1, 8, 0.5, () => s.AlertSeconds, v => s.AlertSeconds = v, v => $"{v:0.0} с");
 
-        var about = Section("ABOUT");
-        var aboutHero = new DockPanel { Margin=new Thickness(0,0,0,20) };
-        var mascot = new HoshinoCompanion(_settings) { Width=150, Height=150, Interactive=true, Playing=()=>true };
-        DockPanel.SetDock(mascot,Dock.Right);aboutHero.Children.Add(mascot);
-        var projectIdentity=new StackPanel { VerticalAlignment=VerticalAlignment.Center };
-        projectIdentity.Children.Add(new TextBlock { Text="Hoshino Island", FontSize=30, FontWeight=FontWeights.SemiBold });
-        projectIdentity.Children.Add(new TextBlock { Text="Takayom1 · сделано вместе с Codex", Opacity=.7, Margin=new Thickness(0,8,0,0) });
-        projectIdentity.Children.Add(new TextBlock { Text="Твой маленький остров среди большого дня.", TextWrapping=TextWrapping.Wrap, Opacity=.6, Margin=new Thickness(0,8,0,0) });
-        aboutHero.Children.Add(projectIdentity);about.Children.Add(aboutHero);
-        Note(about,"Нажми на Хошино: она смутится, рассердится или снова станет обычной. Уменьшение анимаций учитывается.");
-        var links = new WrapPanel { Margin = new Thickness(0, 6, 0, 0) };
+        // 6. Помощник AI и Голос
+        var assistantPage = CreatePage("Assistant", "Помощник AI и Голос", "CLI-нейросети (Codex, Gemini CLI, Claude Code), голос Хошино (RVC), Whisper и фраза «Хей Хошино».");
+        var aiCard = SubCard(assistantPage, null);
+        aiCard.Children.Add(new AssistantSettingsPanel());
+
+        // 7. Obsidian · Память
+        var obsidianPage = CreatePage("Obsidian", "Obsidian · Память", "Хранилище заметок, дневника и общих задач с Хошино.");
+        var obsCard = SubCard(obsidianPage, null);
+        obsCard.Children.Add(new ObsidianSettingsPanel());
+
+        // 8. Виджеты и Полка файлов
+        var widgetsPage = CreatePage("Widgets", "Виджеты и Полка", "Вкладки раскрытого острова, погода, календарь, полка с Wi-Fi QR и быстрые приложения.");
+        var navModeCard = SubCard(widgetsPage, "Навигация и приватность");
+        Choice(navModeCard, "Стиль шапки", new[]
+        {
+            (PageNavigation.Tabs, "Значки вкладок"),
+            (PageNavigation.Dots, "Компактные точки"),
+        }, () => s.PageNavigation, v => s.PageNavigation = v);
+        Check(navModeCard, "Показывать точку активности микрофона и камеры", () => s.PrivacyIndicator, v => s.PrivacyIndicator = v);
+        Check(navModeCard, "Вкладка задач (To-Do)", () => s.TodoEnabled, v => s.TodoEnabled = v);
+        Check(navModeCard, "Вкладка быстрых заметок", () => s.NotesEnabled, v => s.NotesEnabled = v);
+
+        var shelfCard = SubCard(widgetsPage, "Полка файлов и Wi-Fi QR");
+        Check(shelfCard, "Включить вкладку Полки (перетаскивание файлов + передача на телефон по QR)", () => s.ShelfEnabled, v => s.ShelfEnabled = v);
+        Check(shelfCard, "Оставлять файлы на полке после перетаскивания наружу", () => s.ShelfKeepAfterDrag, v => s.ShelfKeepAfterDrag = v);
+
+        var weatherCard = SubCard(widgetsPage, "Погода (Open-Meteo)");
+        Check(weatherCard, "Показывать вкладку погоды", () => s.WeatherEnabled, v => s.WeatherEnabled = v);
+        Check(weatherCard, "Показывать погоду рядом с часами в свёрнутой капсуле", () => s.WeatherInIdlePill, v => s.WeatherInIdlePill = v);
+        Choice(weatherCard, "Локация", new[] { (true, "Геолокация ПК"), (false, "Выбранный город") }, () => s.WeatherUseDeviceLocation, v => s.WeatherUseDeviceLocation = v);
+        CitySearch(weatherCard);
+        Choice(weatherCard, "Единицы", new[]
+        {
+            (TemperatureUnit.Auto, "Авто"),
+            (TemperatureUnit.Celsius, "°C"),
+            (TemperatureUnit.Fahrenheit, "°F"),
+        }, () => s.TemperatureUnit, v => s.TemperatureUnit = v);
+
+        var calNotifCard = SubCard(widgetsPage, "Уведомления Windows и Календарь");
+        IdentityStatus(calNotifCard);
+        Check(calNotifCard, "Показывать уведомления других приложений на островке", () => s.NotificationsEnabled, v => s.NotificationsEnabled = v);
+        Check(calNotifCard, "Скрывать текст сообщений в уведомлениях", () => s.NotificationsHideText, v => s.NotificationsHideText = v);
+        Slider(calNotifCard, "Время показа уведомления", 2, 12, 0.5, () => s.NotificationSeconds, v => s.NotificationSeconds = v, v => $"{v:0.0} с");
+        Check(calNotifCard, "Включить вкладку Календаря и Дневника", () => s.CalendarEnabled, v => s.CalendarEnabled = v);
+        Check(calNotifCard, "Подключить системные календари Windows", () => s.WindowsCalendar, v => s.WindowsCalendar = v);
+        IcsLinks(calNotifCard);
+        Choice(calNotifCard, "Напоминание до встречи", new[] { (0, "Выкл"), (1, "1 мин"), (5, "5 мин"), (10, "10 мин"), (15, "15 мин") },
+            () => s.CalendarReminderMinutes, v => s.CalendarReminderMinutes = v);
+
+        var appsCard = SubCard(widgetsPage, "Быстрый запуск приложений");
+        Slider(appsCard, "Размер значков приложений", 16, 48, 2, () => s.QuickAppIconSize, v => s.QuickAppIconSize = v, v => $"{v:0} px");
+        _quickAppsPanel = new StackPanel();
+        appsCard.Children.Add(_quickAppsPanel);
+        BuildQuickApps();
+
+        // 9. О программе и Обновления
+        var aboutPage = CreatePage("About", "О программе", "Версия острова, обновления и открытые лицензии.");
+        var aboutCard = SubCard(aboutPage, null);
+        var aboutHero = new DockPanel { Margin = new Thickness(0, 0, 0, 16) };
+        var mascot = new HoshinoCompanion(_settings) { Width = 136, Height = 136, Interactive = true, Playing = () => true };
+        DockPanel.SetDock(mascot, Dock.Right);
+        aboutHero.Children.Add(mascot);
+
+        var projectIdentity = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        projectIdentity.Children.Add(new TextBlock { Text = $"HoshiBar · {AppVersion}", FontSize = 26, FontWeight = FontWeights.SemiBold });
+        projectIdentity.Children.Add(new TextBlock { Text = "Takayom1 · твой спокойный островок среди большого дня.", Opacity = 0.72, Margin = new Thickness(0, 6, 12, 0), TextWrapping = TextWrapping.Wrap });
+        Note(projectIdentity, "Нажми на Хошино справа — она смутится, нахмурится или улыбнётся.");
+        aboutHero.Children.Add(projectIdentity);
+        aboutCard.Children.Add(aboutHero);
+
+        var updCard = SubCard(aboutPage, "Обновления");
+        Check(updCard, "Проверять обновления раз в день", () => s.CheckForUpdates, v => s.CheckForUpdates = v);
+        UpdateControls(updCard);
+
+        var licCard = SubCard(aboutPage, "Лицензии и авторство");
+        var links = new WrapPanel { Margin = new Thickness(0, 2, 0, 12) };
         void Link(string text, string target)
         {
             var button = new Button { Style = (Style)FindResource("ChipButton"), Content = text, Margin = new Thickness(0, 0, 8, 8) };
             button.Click += (_, _) =>
             {
                 try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(target) { UseShellExecute = true }); }
-                catch (Exception) { /* no app for the file type */ }
+                catch (Exception) { }
             };
             links.Children.Add(button);
         }
         string Doc(string name) => System.IO.Path.Combine(AppContext.BaseDirectory, name);
         Link("GitHub · Takayom1", "https://github.com/Takayom1");
         Link("Telegram · @takayom1", "https://t.me/takayom1");
-        Link("MIT · наши компоненты",Doc("LICENSE-HOSHINO-MIT.txt"));
-        Link("Лицензии и авторство",Doc("LICENSING.md"));
-        Link("Приватность",Doc("PRIVACY.txt"));
-        about.Children.Add(links);
-        var credits=new StackPanel { Margin=new Thickness(0,20,0,0) };
-        credits.Children.Add(new TextBlock { Text="Лицензии и авторство",FontWeight=FontWeights.SemiBold,Margin=new Thickness(0,0,0,8) });
-        credits.Children.Add(new TextBlock { Text="Based on D-Island by h7 (ibuildrigs) - https://github.com/H7gamer/d-island",TextWrapping=TextWrapping.Wrap,FontSize=12 });
-        credits.Children.Add(new TextBlock { Text="Модификация Takayom1 с помощью Codex. Не является официальным выпуском D-Island. Унаследованные части: D-Island License 1.0; наши самостоятельные компоненты: MIT. Права на Blue Archive и персонажа принадлежат их правообладателям.",TextWrapping=TextWrapping.Wrap,Opacity=.65,FontSize=12,Margin=new Thickness(0,8,0,0) });
-        about.Children.Add(credits);
-        CreditText.Text="Hoshino Island · Takayom1";
+        Link("MIT · наши компоненты", Doc("LICENSE-HOSHIBAR-MIT.txt"));
+        Link("Лицензии и авторство", Doc("LICENSING.md"));
+        Link("Приватность", Doc("PRIVACY.txt"));
+        licCard.Children.Add(links);
+        licCard.Children.Add(new TextBlock
+        {
+            Text = "Based on D-Island by h7 (ibuildrigs) - https://github.com/H7gamer/d-island",
+            TextWrapping = TextWrapping.Wrap,
+            FontSize = 12,
+        });
+        licCard.Children.Add(new TextBlock
+        {
+            Text = "Модификация Takayom1. Не является официальным выпуском D-Island. Унаследованные части распространяются по D-Island License 1.0; самостоятельные модули HoshiBar — по лицензии MIT. Права на Blue Archive и персонажа принадлежат их правообладателям.",
+            TextWrapping = TextWrapping.Wrap,
+            Opacity = 0.68,
+            FontSize = 12,
+            Margin = new Thickness(0, 6, 0, 0),
+        });
+
+        CreditText.Text = $"HoshiBar · {AppVersion} · Takayom1";
 
         _loading = false;
-        Dispatcher.InvokeAsync(UpdateNavSelection, DispatcherPriority.Loaded); // after layout
+        ApplyWindowThemeChrome();
+        SelectSectionByKey(_selectedSectionKey);
     }
 
-    /// <summary>The slider(s) that apply to the chosen material.</summary>
-    private void BuildMaterialOptions()
+    private void BuildHorusPaletteOptions()
     {
-        if (_materialOptions is null) return;
+        if (_horusPaletteOptions is null) return;
         var wasLoading = _loading;
         _loading = true;
-        _materialOptions.Children.Clear();
+        _horusPaletteOptions.Children.Clear();
         var s = _settings;
-        switch (s.Material)
+
+        if (s.IslandSkin == IslandSkin.HorusGlass)
         {
-            case IslandMaterial.Translucent:
-                Slider(_materialOptions, "Opacity", 0.15, 1, 0.05, () => s.BackgroundOpacity, v => s.BackgroundOpacity = v, v => $"{v * 100:0}%");
-                break;
-            case IslandMaterial.LiquidGlass:
-                Slider(_materialOptions, "Blur", 0, 1, 0.05, () => s.GlassBlur, v => s.GlassBlur = v,
-                    v => v == 0 ? "Clear" : v >= 1 ? "Frosted" : $"{v * 100:0}%");
-                Slider(_materialOptions, "Shininess", 0, 1, 0.05, () => s.GlassShine, v => s.GlassShine = v,
-                    v => v == 0 ? "Matte" : $"{v * 100:0}%");
-                Slider(_materialOptions, "Tint", 0, 0.9, 0.02, () => s.GlassTint, v => s.GlassTint = v, v => v == 0 ? "None" : $"{v * 100:0}%");
-                Choice(_materialOptions, "Blur engine", new[]
-                {
-                    (GlassEngine.Auto, "Auto"),
-                    (GlassEngine.Gpu, "GPU"),
-                    (GlassEngine.ScreenCapture, "Screen capture"),
-                }, () => s.GlassEngine, v => s.GlassEngine = v);
-                Note(_materialOptions,
-                    "GPU: Windows draws what's behind the island and the GPU blurs it. Near-zero CPU, and the island " +
-                    "stays visible in screenshots. It uses an undocumented Windows API, so it's tested on each Windows " +
-                    "build before use. Screen capture: works everywhere, but uses more CPU and hides the island from " +
-                    "screenshots while blurring. Auto picks GPU when the test passed.");
-                break;
-            default:
-                Note(_materialOptions, "Solid background.");
-                break;
+            var lbl = new TextBlock { Text = "Лорная палитра Horus Glass", FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 4, 0, 4) };
+            _horusPaletteOptions.Children.Add(lbl);
+            _horusPaletteOptions.Children.Add(SettingsSkinPresenter.BuildLorePaletteStrip(s, picked =>
+            {
+                Update(() => s.DesignPreset = picked);
+                Build();
+            }));
+            Slider(_horusPaletteOptions, "Оттенок акцента в фоне", 0, 0.45, 0.03, () => s.BackgroundTint, v =>
+            {
+                s.BackgroundTint = v;
+                ApplyWindowThemeChrome();
+            }, v => v == 0 ? "Выкл" : $"{v * 100:0}%");
+
+            if (IslandSkinPresets.NormalizePreset(s.DesignPreset) == "Custom")
+                CustomDesignColors(_horusPaletteOptions);
+        }
+        else
+        {
+            var desc = s.IslandSkin switch
+            {
+                IslandSkin.ShittimChest => "Матовая молочно-голубая прозрачность планшета Сенсея (Schale OS · шрифт Exo 2) без стеклянных бликов.",
+                IslandSkin.Win7Aero => "Футуристичное оптическое сапфировое стекло Windows 7 Aero с живым размытием, диагональными гранями и Start-Orb.",
+                IslandSkin.ChibiPop => "Плоский пастельный 2D стикер-скин «Постеры Юмэ» (шрифт Rounded Mplus 1c) без размытия и с чётким контуром.",
+                IslandSkin.PixelTamagotchi => "Пиксельный ретро-гаджет со ступенчатым корпусом, мятным LCD-экраном Тамагочи и чётким читаемым шрифтом Bahnschrift.",
+                _ => "",
+            };
+            if (desc.Length > 0) Note(_horusPaletteOptions, desc);
         }
         _loading = wasLoading;
     }
 
-    // ---------------------------------------------------------------- updates
+    private void BuildGhostModeControls(Panel panel)
+    {
+        var mw = GetMainWindow();
+        var activeBox = new CheckBox
+        {
+            Content = "Включить режим «Призрак» прямо сейчас",
+            IsChecked = mw?.IsGhostMode == true,
+        };
+        activeBox.Click += (_, _) =>
+        {
+            GetMainWindow()?.SetGhostMode(activeBox.IsChecked == true);
+        };
+        panel.Children.Add(activeBox);
 
-    private Action? _updateStatusRefresh;
+        Slider(panel, "Прозрачность в режиме «Призрак»", 0.25, 0.85, 0.05,
+            () => _settings.GhostModeOpacity,
+            v =>
+            {
+                _settings.GhostModeOpacity = v;
+                if (GetMainWindow() is { IsGhostMode: true } w) w.SetGhostMode(true, w.GhostModeUntil is { } u ? u - DateTime.Now : null);
+            },
+            v => $"{v * 100:0}%");
 
-    /// <summary>Current version, update status, and "Check for updates" / "Install now".</summary>
+        HotkeyRow(panel, "Хоткей режима «Призрак»", () => _settings.GhostModeHotkey, v => _settings.GhostModeHotkey = v, () => _settings.GhostHotkeyProblem);
+
+        var quickRow = new WrapPanel { Margin = new Thickness(0, 6, 0, 0) };
+        var fiveMin = new Button
+        {
+            Style = (Style)FindResource("ChipButton"),
+            Content = "Призрак на 5 минут",
+            Margin = new Thickness(0, 0, 8, 4),
+        };
+        fiveMin.Click += (_, _) =>
+        {
+            GetMainWindow()?.SetGhostMode(true, TimeSpan.FromMinutes(5));
+            activeBox.IsChecked = true;
+        };
+        quickRow.Children.Add(fiveMin);
+        panel.Children.Add(quickRow);
+    }
+
+    // ---------------------------------------------------------------- page & card builders
+
+    private StackPanel CreatePage(string key, string title, string subtitle)
+    {
+        var pageStack = new StackPanel();
+        var heading = new StackPanel { Margin = new Thickness(2, 0, 0, 16) };
+        heading.Children.Add(new TextBlock { Text = title, FontSize = 24, FontWeight = FontWeights.SemiBold });
+        heading.Children.Add(new TextBlock { Text = subtitle, FontSize = 12.5, Foreground = Secondary, Margin = new Thickness(0, 4, 0, 0), TextWrapping = TextWrapping.Wrap });
+        pageStack.Children.Add(heading);
+
+        var wrapper = new Grid { Visibility = Visibility.Collapsed };
+        wrapper.Children.Add(pageStack);
+        Sections.Children.Add(wrapper);
+
+        // Sidebar item with unclipped RenderTransform sticker shadow for Chibi Pop
+        var navCell = new Grid { Margin = new Thickness(0, 0, 0, 5) };
+        var navShadow = new Border
+        {
+            Background = IslandSkinEngine.Frozen(Color.FromRgb(0x2A, 0x1E, 0x2E)),
+            RenderTransform = new TranslateTransform(2.5, 2.5),
+            Visibility = Visibility.Collapsed,
+            IsHitTestVisible = false,
+        };
+        var navPill = new Border
+        {
+            Padding = new Thickness(12, 9, 12, 9),
+            Cursor = Cursors.Hand,
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(1),
+            BorderBrush = Brushes.Transparent,
+        };
+
+        var row = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        var iconHost = new ContentControl { VerticalAlignment = VerticalAlignment.Center };
+        var navLabel = new TextBlock { Text = title, FontSize = 13, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
+        row.Children.Add(iconHost);
+        row.Children.Add(navLabel);
+        navPill.Child = row;
+
+        navCell.Children.Add(navShadow);
+        navCell.Children.Add(navPill);
+
+        var entry = new NavEntry(key, title, wrapper, navPill, navShadow, navLabel, iconHost);
+        navPill.MouseEnter += (_, _) => { if (_selectedSectionKey != key) navPill.Background = Hover; };
+        navPill.MouseLeave += (_, _) => { if (_selectedSectionKey != key) navPill.Background = Brushes.Transparent; };
+        navPill.MouseLeftButtonUp += (_, _) => SelectSectionByKey(key);
+
+        Nav.Children.Add(navCell);
+        _nav.Add(entry);
+        return pageStack;
+    }
+
+    private StackPanel SubCard(Panel page, string? heading)
+    {
+        var spec = IslandSkinEngine.Current;
+        var outer = new Grid { Margin = new Thickness(0, 0, 0, 14) };
+        var shadow = new Border
+        {
+            CornerRadius = new CornerRadius(spec.IsPixelMode ? 2 : 16),
+            Background = IslandSkinEngine.Frozen(Color.FromRgb(0x2A, 0x1E, 0x2E)),
+            RenderTransform = new TranslateTransform(3.5, 3.5),
+            Visibility = spec.IsCartoonSticker ? Visibility.Visible : Visibility.Collapsed,
+            IsHitTestVisible = false,
+        };
+        var card = new Border
+        {
+            CornerRadius = new CornerRadius(spec.IsPixelMode ? 2 : 16),
+            BorderThickness = new Thickness(spec.CardBorderThickness),
+            Padding = new Thickness(18, 15, 18, 15),
+        };
+        card.SetResourceReference(Border.BackgroundProperty, "HoshinoSurface");
+        card.SetResourceReference(Border.BorderBrushProperty, "HoshinoBorder");
+
+        var body = new StackPanel();
+        if (!string.IsNullOrEmpty(heading))
+        {
+            body.Children.Add(new TextBlock
+            {
+                Text = heading,
+                FontSize = 15,
+                FontWeight = FontWeights.SemiBold,
+                Margin = new Thickness(0, 0, 0, 10),
+            });
+        }
+
+        card.Child = body;
+        outer.Children.Add(shadow);
+        outer.Children.Add(card);
+        page.Children.Add(outer);
+        return body;
+    }
+
+    private void SelectSectionByKey(string key)
+    {
+        if (_nav.Count == 0) return;
+        var target = _nav.FirstOrDefault(n => n.Key == key) ?? _nav[0];
+        _selectedSectionKey = target.Key;
+
+        foreach (var n in _nav)
+            n.PageWrapper.Visibility = n.Key == _selectedSectionKey ? Visibility.Visible : Visibility.Collapsed;
+
+        RefreshNavStyles();
+        SettingsScroller.ScrollToTop();
+    }
+
+    private void RefreshNavStyles()
+    {
+        var spec = IslandSkinEngine.Current;
+        var radius = new CornerRadius(spec.IsPixelMode ? 2 : 11);
+
+        foreach (var n in _nav)
+        {
+            var selected = n.Key == _selectedSectionKey;
+            n.NavPill.CornerRadius = radius;
+            n.NavShadow.CornerRadius = radius;
+            n.NavShadow.Visibility = selected && spec.IsCartoonSticker ? Visibility.Visible : Visibility.Collapsed;
+
+            if (selected)
+            {
+                n.NavPill.Background = spec.IsAeroGlass
+                    ? IslandSkinEngine.CreateAeroConvexGlassBrush(true)
+                    : (Brush)Application.Current.Resources["HoshinoAccent"];
+                n.NavPill.BorderBrush = spec.IsCartoonSticker
+                    ? IslandSkinEngine.Frozen(Color.FromRgb(0x2A, 0x1E, 0x2E))
+                    : spec.IsPixelMode
+                        ? IslandSkinEngine.Frozen(Color.FromRgb(0x24, 0x1A, 0x34))
+                        : (Brush)Application.Current.Resources["HoshinoAccent"];
+                n.NavPill.BorderThickness = new Thickness(spec.IsCartoonSticker ? 2.0 : spec.IsPixelMode ? 1.8 : 1.0);
+                var fg = spec.IsAeroGlass ? Brushes.White : (Brush)Application.Current.Resources["HoshinoOnAccent"];
+                n.NavLabel.Foreground = fg;
+                n.NavLabel.FontWeight = FontWeights.SemiBold;
+                n.NavIconHost.Content = SettingsSkinPresenter.CreateNavIcon(n.Key, fg);
+            }
+            else
+            {
+                n.NavPill.Background = spec.IsPixelMode
+                    ? (Brush)Application.Current.Resources["HoshinoSurface"]
+                    : Brushes.Transparent;
+                n.NavPill.BorderBrush = spec.IsPixelMode
+                    ? (Brush)Application.Current.Resources["HoshinoBorder"]
+                    : Brushes.Transparent;
+                n.NavPill.BorderThickness = new Thickness(spec.IsPixelMode ? 1.4 : 1.0);
+                var fg = (Brush)Application.Current.Resources["HoshinoText"];
+                var muted = (Brush)Application.Current.Resources["HoshinoMuted"];
+                n.NavLabel.Foreground = fg;
+                n.NavLabel.FontWeight = FontWeights.Normal;
+                n.NavIconHost.Content = SettingsSkinPresenter.CreateNavIcon(n.Key, muted);
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- reusable controls
+
+    private void CustomDesignColors(StackPanel panel)
+    {
+        var row = new WrapPanel { Margin = new Thickness(0, 8, 0, 8) };
+        TextBox Field(string title, string value)
+        {
+            var col = new StackPanel { Margin = new Thickness(0, 0, 10, 0) };
+            col.Children.Add(new TextBlock { Text = title, Opacity = 0.7, Margin = new Thickness(0, 0, 0, 4), FontSize = 12 });
+            var box = new TextBox { Text = value, Width = 108 };
+            col.Children.Add(box);
+            row.Children.Add(col);
+            return box;
+        }
+        var accent = Field("Акцент", _settings.DesignAccent);
+        var bg = Field("Фон", _settings.DesignBackground);
+        var text = Field("Текст", _settings.DesignText);
+        var apply = new Button { Style = (Style)FindResource("ChipButton"), Content = "Применить цвета", Margin = new Thickness(0, 18, 0, 0) };
+        var feedback = new TextBlock { TextWrapping = TextWrapping.Wrap, Opacity = 0.7, FontSize = 12 };
+        apply.Click += (_, _) =>
+        {
+            if (new[] { accent.Text, bg.Text, text.Text }.Any(v => !System.Text.RegularExpressions.Regex.IsMatch(v, "^#[0-9a-fA-F]{6}$")))
+            {
+                feedback.Text = "Введите цвета в формате #RRGGBB.";
+                return;
+            }
+            _settings.DesignPreset = "Custom";
+            _settings.DesignAccent = accent.Text;
+            _settings.DesignBackground = bg.Text;
+            _settings.DesignText = text.Text;
+            Update(() => { });
+            ApplyWindowThemeChrome();
+            feedback.Text = "Своя палитра применена.";
+        };
+        row.Children.Add(apply);
+        panel.Children.Add(row);
+        panel.Children.Add(feedback);
+    }
+
     private void UpdateControls(Panel panel)
     {
-        var status = new TextBlock { Foreground = Secondary, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 6) };
-        var check = new Button { Style = (Style)FindResource("ChipButton"), Content = "Проверить и скачать обновление", Margin = new Thickness(0, 0, 8, 0) };
+        var status = new TextBlock { Foreground = Secondary, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 8) };
+        var check = new Button { Style = (Style)FindResource("ChipButton"), Content = "Проверить обновления", Margin = new Thickness(0, 0, 8, 0) };
         var install = new Button { Style = (Style)FindResource("ChipButton"), Content = "Установить", Margin = new Thickness(0, 0, 8, 0) };
-        var open = new Button { Style = (Style)FindResource("ChipButton"), Content = "Страница выпуска", Margin = new Thickness(0, 0, 8, 0) };
-        var whatsNew = new Button { Style = (Style)FindResource("ChipButton"), Content = "What's new", Margin = new Thickness(0) };
-        whatsNew.Visibility=Visibility.Collapsed;
-        var row = new WrapPanel { Margin = new Thickness(0, 0, 0, 4), Children = { check, install, open, whatsNew } };
+        var open = new Button { Style = (Style)FindResource("ChipButton"), Content = "Страница релиза", Margin = new Thickness(0, 0, 8, 0) };
+        var row = new WrapPanel { Margin = new Thickness(0, 0, 0, 4), Children = { check, install, open } };
         panel.Children.Add(status);
         panel.Children.Add(row);
 
         void Refresh()
         {
             var u = App.Updates;
-            var current = $"You have version {UpdateService.CurrentVersion}.";
+            var current = $"Установлена версия {UpdateService.CurrentVersion}.";
             status.Text = u?.State switch
             {
-                UpdateState.Checking => $"{current} Checking…",
-                UpdateState.UpToDate => $"{current} It's the latest.",
-                
-                UpdateState.Available => $"{current} Version {u.Latest?.Version} is available.",
-                UpdateState.Downloading => $"{current} Downloading version {u.Latest?.Version}…",
-                UpdateState.ReadyToInstall =>
-                    $"{current} Version {u.Latest?.Version} is downloaded and verified. Click Install now.",
-                UpdateState.Installing => $"Installing version {u.Latest?.Version}…",
-                UpdateState.Failed => $"{current} Update check failed: {u.Error}.",
-                _ => _settings.LastUpdateCheck is { } last ? $"{current} Last checked {last.ToLocalTime():g}." : current,
+                UpdateState.Checking => $"{current} Проверяю обновления…",
+                UpdateState.UpToDate => $"{current} У вас самая свежая версия.",
+                UpdateState.Available => $"{current} Доступна версия {u.Latest?.Version}.",
+                UpdateState.Downloading => $"{current} Скачиваю версию {u.Latest?.Version}…",
+                UpdateState.ReadyToInstall => $"{current} Версия {u.Latest?.Version} скачана и проверена. Нажмите «Установить».",
+                UpdateState.Installing => $"Устанавливаю версию {u.Latest?.Version}…",
+                UpdateState.Failed => $"{current} Не удалось проверить обновления: {u.Error}.",
+                _ => u is null
+                    ? $"{current} Локальная сборка (.local-dev) — автообновление отключено."
+                    : _settings.LastUpdateCheck is { } last ? $"{current} Последняя проверка: {last.ToLocalTime():g}." : current,
             };
             check.IsEnabled = u is not null && u.State is not (UpdateState.Checking or UpdateState.Downloading or UpdateState.Installing);
             install.Visibility = u?.State == UpdateState.ReadyToInstall ? Visibility.Visible : Visibility.Collapsed;
@@ -404,7 +693,11 @@ public partial class SettingsWindow : Window
         {
             if (App.Updates is { } u) await u.CheckAsync(manual: true);
         };
-        install.Click += (_, _) => {try {App.Updates?.Install();}catch(Exception e){MessageBox.Show(e.Message,"Обновление");}};
+        install.Click += (_, _) =>
+        {
+            try { App.Updates?.Install(); }
+            catch (Exception e) { MessageBox.Show(e.Message, "Обновление"); }
+        };
         open.Click += (_, _) =>
         {
             var url = App.Updates?.Latest?.PageUrl ?? $"https://github.com/{UpdateService.Repository}/releases";
@@ -417,16 +710,13 @@ public partial class SettingsWindow : Window
         Refresh();
     }
 
-    // ---------------------------------------------------------------- alarms
-
-    /// <summary>Alarms: time (HH:mm), daily or once, on/off, label; plus "Add alarm".</summary>
     private void AlarmList(Panel panel)
     {
-        Note(panel, "Alarms ring in the island (with sound) while Hoshino Island is running. Click the island to stop one.");
+        Note(panel, "Будильники звонят на островке. Нажмите на капсулу острова, чтобы остановить сигнал.");
         var list = new StackPanel();
         panel.Children.Add(list);
 
-        void Save() => Update(() => _settings.Alarms = _settings.Alarms.ToList()); // notify + save
+        void Save() => Update(() => _settings.Alarms = _settings.Alarms.ToList());
 
         void Fill()
         {
@@ -434,7 +724,7 @@ public partial class SettingsWindow : Window
             foreach (var alarm in _settings.Alarms)
             {
                 var row = new DockPanel { Margin = new Thickness(0, 3, 0, 3) };
-                var remove = SmallButton("", "Delete alarm");
+                var remove = SmallButton("", "Удалить будильник");
                 remove.Click += (_, _) =>
                 {
                     _settings.Alarms.Remove(alarm);
@@ -449,7 +739,7 @@ public partial class SettingsWindow : Window
                 DockPanel.SetDock(enabled, Dock.Left);
                 row.Children.Add(enabled);
 
-                var time = new TextBox { Text = alarm.Time, Width = 64, ToolTip = "24-hour time, e.g. 07:30" };
+                var time = new TextBox { Text = alarm.Time, Width = 68, ToolTip = "24-часовой формат, например 07:30" };
                 time.LostFocus += (_, _) =>
                 {
                     if (TimeSpan.TryParse(time.Text.Trim(), out var t) && t >= TimeSpan.Zero && t < TimeSpan.FromDays(1))
@@ -464,12 +754,12 @@ public partial class SettingsWindow : Window
                 DockPanel.SetDock(time, Dock.Left);
                 row.Children.Add(time);
 
-                var daily = new CheckBox { Content = "Daily", IsChecked = alarm.Daily, Margin = new Thickness(10, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center };
+                var daily = new CheckBox { Content = "Ежедневно", IsChecked = alarm.Daily, Margin = new Thickness(10, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center };
                 daily.Click += (_, _) => { alarm.Daily = daily.IsChecked == true; Save(); };
                 DockPanel.SetDock(daily, Dock.Left);
                 row.Children.Add(daily);
 
-                var label = new TextBox { Text = alarm.Label, ToolTip = "Label (optional)" };
+                var label = new TextBox { Text = alarm.Label, ToolTip = "Подпись (необязательно)" };
                 label.LostFocus += (_, _) => { alarm.Label = label.Text.Trim(); Save(); };
                 row.Children.Add(label);
                 list.Children.Add(row);
@@ -477,7 +767,7 @@ public partial class SettingsWindow : Window
         }
         Fill();
 
-        var add = new Button { Style = (Style)FindResource("ChipButton"), Content = "Add alarm", Margin = new Thickness(0, 6, 0, 0), HorizontalAlignment = HorizontalAlignment.Left };
+        var add = new Button { Style = (Style)FindResource("ChipButton"), Content = "+ Добавить будильник", Margin = new Thickness(0, 6, 0, 0), HorizontalAlignment = HorizontalAlignment.Left };
         add.Click += (_, _) =>
         {
             var next = DateTime.Now.AddHours(1);
@@ -488,9 +778,6 @@ public partial class SettingsWindow : Window
         panel.Children.Add(add);
     }
 
-    // ---------------------------------------------------------------- identity & calendar links
-
-    /// <summary>Whether the one-time setup is done, with a button to run it.</summary>
     private void IdentityStatus(Panel panel)
     {
         if (PackageIdentity.HasIdentity)
@@ -500,47 +787,41 @@ public partial class SettingsWindow : Window
             {
                 access = Windows.UI.Notifications.Management.UserNotificationListener.Current.GetAccessStatus() switch
                 {
-                    Windows.UI.Notifications.Management.UserNotificationListenerAccessStatus.Allowed => "notification access allowed",
-                    Windows.UI.Notifications.Management.UserNotificationListenerAccessStatus.Denied =>
-                        "notification access denied: allow it in Windows Settings > Privacy & security > Notifications",
-                    _ => "Windows will ask for notification access",
+                    Windows.UI.Notifications.Management.UserNotificationListenerAccessStatus.Allowed => "доступ к уведомлениям разрешён",
+                    Windows.UI.Notifications.Management.UserNotificationListenerAccessStatus.Denied => "доступ запрещён в параметрах Windows",
+                    _ => "Windows запросит доступ при первом чтении",
                 };
             }
             catch (Exception)
             {
-                access = "notification access unknown";
+                access = "статус неизвестен";
             }
-            Note(panel, $"Set up ✓ ({access}).");
+            Note(panel, $"Пакетная идентификация настроена ✓ ({access}).");
             return;
         }
 
-        Note(panel, "Windows only lets apps read notifications and the Windows calendar if they have a package " +
-                    "identity. The one-time setup registers one for Hoshino Island: it downloads Microsoft's packaging " +
-                    "tools (about 100 MB, once), creates a signing certificate, and Windows asks for permission once " +
-                    "to trust it. Hoshino Island restarts when it's done.");
-        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 4) };
-        var setup = new Button { Style = (Style)FindResource("ChipButton"), Content = "Set up…", Margin = new Thickness(0) };
+        Note(panel, "Для чтения системных уведомлений и календаря Windows требуется разовая регистрация локального пакета HoshiBar.");
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 6) };
+        var setup = new Button { Style = (Style)FindResource("ChipButton"), Content = "Настроить доступ…", Margin = new Thickness(0) };
         setup.Click += (_, _) =>
         {
             PackageIdentity.RunSetup();
             setup.IsEnabled = false;
-            setup.Content = "Running… (a console window shows progress)";
+            setup.Content = "Выполняется настройка…";
         };
         row.Children.Add(setup);
         if (System.IO.File.Exists(PackageIdentity.SetupLog))
         {
-            var log = new Button { Style = (Style)FindResource("ChipButton"), Content = "Last setup log", Margin = new Thickness(8, 0, 0, 0) };
+            var log = new Button { Style = (Style)FindResource("ChipButton"), Content = "Журнал настройки", Margin = new Thickness(8, 0, 0, 0) };
             log.Click += (_, _) => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(PackageIdentity.SetupLog) { UseShellExecute = true });
             row.Children.Add(log);
         }
         panel.Children.Add(row);
     }
 
-    /// <summary>The list of iCal links with remove buttons, and a box to add one.</summary>
     private void IcsLinks(Panel panel)
     {
-        Note(panel, "iCal links: Google Calendar > Settings > your calendar > \"Secret address in iCal format\"; " +
-                    "Outlook.com > Settings > Shared calendars > Publish > ICS; iCloud > Share calendar > Public.");
+        Note(panel, "Ссылки iCal (.ics / webcal): Google Календарь, Outlook или iCloud.");
         var list = new StackPanel();
         panel.Children.Add(list);
 
@@ -550,7 +831,7 @@ public partial class SettingsWindow : Window
             foreach (var url in _settings.CalendarIcsUrls)
             {
                 var row = new DockPanel { Margin = new Thickness(0, 2, 0, 2) };
-                var remove = SmallButton("", "Remove");
+                var remove = SmallButton("", "Удалить");
                 remove.Click += (_, _) =>
                 {
                     Update(() => _settings.CalendarIcsUrls = _settings.CalendarIcsUrls.Where(u => u != url).ToList());
@@ -558,19 +839,18 @@ public partial class SettingsWindow : Window
                 };
                 DockPanel.SetDock(remove, Dock.Right);
                 row.Children.Add(remove);
-                // Show only the host: the rest of a secret address is a password.
                 var host = Uri.TryCreate(url.Replace("webcal://", "https://"), UriKind.Absolute, out var uri) ? uri.Host : url;
-                row.Children.Add(new TextBlock { Text = $"{host}  (link hidden)", VerticalAlignment = VerticalAlignment.Center, Foreground = Secondary });
+                row.Children.Add(new TextBlock { Text = $"{host}  (ссылка скрыта)", VerticalAlignment = VerticalAlignment.Center, Foreground = Secondary });
                 list.Children.Add(row);
             }
         }
         Fill();
 
-        var add = new Grid { Margin = new Thickness(0, 4, 0, 4) };
+        var add = new Grid { Margin = new Thickness(0, 4, 0, 6) };
         add.ColumnDefinitions.Add(new ColumnDefinition());
         add.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var box = new TextBox { ToolTip = "Paste an iCal / webcal link and press Enter" };
-        var button = new Button { Style = (Style)FindResource("ChipButton"), Content = "Add", Margin = new Thickness(8, 0, 0, 0) };
+        var box = new TextBox { ToolTip = "Вставьте ссылку iCal / webcal и нажмите Enter" };
+        var button = new Button { Style = (Style)FindResource("ChipButton"), Content = "Добавить", Margin = new Thickness(8, 0, 0, 0) };
         Grid.SetColumn(button, 1);
         add.Children.Add(box);
         add.Children.Add(button);
@@ -579,7 +859,8 @@ public partial class SettingsWindow : Window
         void Add()
         {
             var url = box.Text.Trim();
-            if (!(url.StartsWith("https://", StringComparison.OrdinalIgnoreCase) || url.StartsWith("webcal://", StringComparison.OrdinalIgnoreCase)
+            if (!(url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+                  || url.StartsWith("webcal://", StringComparison.OrdinalIgnoreCase)
                   || url.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
                 || _settings.CalendarIcsUrls.Contains(url))
                 return;
@@ -588,34 +869,28 @@ public partial class SettingsWindow : Window
             Fill();
         }
         button.Click += (_, _) => Add();
-        box.KeyDown += (_, e) =>
-        {
-            if (e.Key == System.Windows.Input.Key.Enter) Add();
-        };
+        box.KeyDown += (_, e) => { if (e.Key == Key.Enter) Add(); };
     }
 
-    // ---------------------------------------------------------------- weather city
-
-    /// <summary>Search box + results; picking one switches weather to that city.</summary>
     private void CitySearch(Panel panel)
     {
         var row = new Grid { Margin = new Thickness(0, 4, 0, 4) };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(165) });
         row.ColumnDefinitions.Add(new ColumnDefinition());
         var current = new TextBlock
         {
-            Text = _settings.WeatherPlace is { Length: > 0 } place ? place : "No city chosen",
+            Text = _settings.WeatherPlace is { Length: > 0 } place ? place : "Город не выбран",
             Foreground = Secondary,
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
         };
         row.Children.Add(current);
-        var box = new TextBox { ToolTip = "Type a city and press Enter" };
+        var box = new TextBox { ToolTip = "Введите название города и нажмите Enter" };
         Grid.SetColumn(box, 1);
         row.Children.Add(box);
         panel.Children.Add(row);
 
-        var results = new StackPanel { Margin = new Thickness(150, 0, 0, 0) };
+        var results = new StackPanel { Margin = new Thickness(165, 0, 0, 0) };
         panel.Children.Add(results);
         CancellationTokenSource? pending = null;
 
@@ -626,12 +901,9 @@ public partial class SettingsWindow : Window
             pending?.Cancel();
             var cancel = pending = new CancellationTokenSource();
             results.Children.Clear();
-            results.Children.Add(new TextBlock { Text = "Searching…", Foreground = Faint });
+            results.Children.Add(new TextBlock { Text = "Поиск города…", Foreground = Faint });
             IReadOnlyList<Place> places;
-            try
-            {
-                places = await WeatherService.SearchAsync(query, cancel.Token);
-            }
+            try { places = await WeatherService.SearchAsync(query, cancel.Token); }
             catch (Exception)
             {
                 if (cancel.IsCancellationRequested) return;
@@ -639,7 +911,7 @@ public partial class SettingsWindow : Window
             }
             if (cancel.IsCancellationRequested) return;
             results.Children.Clear();
-            if (places.Count == 0) results.Children.Add(new TextBlock { Text = "No places found", Foreground = Faint });
+            if (places.Count == 0) results.Children.Add(new TextBlock { Text = "Ничего не найдено", Foreground = Faint });
             foreach (var p in places)
             {
                 var item = new Border
@@ -647,7 +919,7 @@ public partial class SettingsWindow : Window
                     Background = Brushes.Transparent,
                     CornerRadius = new CornerRadius(6),
                     Padding = new Thickness(8, 4, 8, 4),
-                    Cursor = System.Windows.Input.Cursors.Hand,
+                    Cursor = Cursors.Hand,
                     Child = new TextBlock
                     {
                         Inlines =
@@ -668,69 +940,61 @@ public partial class SettingsWindow : Window
                         _settings.WeatherLongitude = p.Longitude;
                         _settings.WeatherUseDeviceLocation = false;
                     });
-                    Build(); // reflect "A city" and the new name
+                    Build();
                 };
                 results.Children.Add(item);
             }
         }
 
-        box.KeyDown += (_, e) =>
-        {
-            if (e.Key == System.Windows.Input.Key.Enter) Search();
-        };
+        box.KeyDown += (_, e) => { if (e.Key == Key.Enter) Search(); };
     }
 
-    // ---------------------------------------------------------------- hide / show shortcut
-
-    /// <summary>Click the box and press a combination; Backspace or Delete clears it.</summary>
-    private void HotkeyRow(Panel panel)
+    private void HotkeyRow(Panel panel, string label, Func<string> get, Action<string> set, Func<string?> getProblem)
     {
         var row = new Grid { Margin = new Thickness(0, 4, 0, 4) };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(190) });
         row.ColumnDefinitions.Add(new ColumnDefinition());
-        row.Children.Add(new TextBlock { Text = "Hide / show island", VerticalAlignment = VerticalAlignment.Center });
+        row.Children.Add(new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center });
 
         var box = new TextBox
         {
-            Text = string.IsNullOrEmpty(_settings.ToggleHotkey) ? "None" : _settings.ToggleHotkey,
+            Text = string.IsNullOrEmpty(get()) ? "Нет" : get(),
             IsReadOnly = true,
             IsReadOnlyCaretVisible = false,
-            Width = 160,
+            Width = 170,
             HorizontalAlignment = HorizontalAlignment.Left,
-            Cursor = System.Windows.Input.Cursors.Hand,
-            ToolTip = "Click, then press a shortcut (with Ctrl, Alt, Shift or Win). Backspace clears it.",
+            Cursor = Cursors.Hand,
+            ToolTip = "Нажмите и введите комбинацию с Ctrl, Alt, Shift или Win. Backspace — очистить.",
         };
         var problem = new TextBlock { Foreground = Faint, FontSize = 12, TextWrapping = TextWrapping.Wrap };
         void ShowProblem()
         {
-            problem.Text = _settings.HotkeyProblem ?? "";
-            problem.Visibility = _settings.HotkeyProblem is null ? Visibility.Collapsed : Visibility.Visible;
+            var p = getProblem();
+            problem.Text = p ?? "";
+            problem.Visibility = string.IsNullOrEmpty(p) ? Visibility.Collapsed : Visibility.Visible;
         }
 
-        box.GotKeyboardFocus += (_, _) => box.Text = "Press a shortcut…";
-        box.LostKeyboardFocus += (_, _) =>
-            box.Text = string.IsNullOrEmpty(_settings.ToggleHotkey) ? "None" : _settings.ToggleHotkey;
+        box.GotKeyboardFocus += (_, _) => box.Text = "Нажмите клавиши…";
+        box.LostKeyboardFocus += (_, _) => box.Text = string.IsNullOrEmpty(get()) ? "Нет" : get();
         box.PreviewKeyDown += (_, e) =>
         {
             e.Handled = true;
-            var key = e.Key == System.Windows.Input.Key.System ? e.SystemKey : e.Key;
+            var key = e.Key == Key.System ? e.SystemKey : e.Key;
             string? text;
-            if (key is System.Windows.Input.Key.Back or System.Windows.Input.Key.Delete)
+            if (key is Key.Back or Key.Delete)
                 text = "";
-            else if (key is System.Windows.Input.Key.LeftCtrl or System.Windows.Input.Key.RightCtrl
-                     or System.Windows.Input.Key.LeftAlt or System.Windows.Input.Key.RightAlt
-                     or System.Windows.Input.Key.LeftShift or System.Windows.Input.Key.RightShift
-                     or System.Windows.Input.Key.LWin or System.Windows.Input.Key.RWin)
-                return; // wait for the actual key
-            else if (System.Windows.Input.Keyboard.Modifiers == System.Windows.Input.ModifierKeys.None)
-                return; // a bare key would take over normal typing everywhere
+            else if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt
+                     or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin)
+                return;
+            else if (Keyboard.Modifiers == ModifierKeys.None)
+                return;
             else
-                text = Hotkey.Format(System.Windows.Input.Keyboard.Modifiers, key);
+                text = Hotkey.Format(Keyboard.Modifiers, key);
 
-            Update(() => _settings.ToggleHotkey = text);
-            box.Text = text.Length == 0 ? "None" : text;
+            Update(() => set(text));
+            box.Text = text.Length == 0 ? "Нет" : text;
             ShowProblem();
-            System.Windows.Input.Keyboard.ClearFocus();
+            Keyboard.ClearFocus();
         };
         Grid.SetColumn(box, 1);
         row.Children.Add(box);
@@ -739,12 +1003,6 @@ public partial class SettingsWindow : Window
         ShowProblem();
     }
 
-    // ---------------------------------------------------------------- quick apps
-
-    private StackPanel? _quickAppsPanel;
-    private IReadOnlyList<InstalledApp>? _installedApps;
-
-    /// <summary>The chosen apps (reorder / remove) and an "Add app" picker.</summary>
     private void BuildQuickApps()
     {
         if (_quickAppsPanel is null) return;
@@ -757,12 +1015,12 @@ public partial class SettingsWindow : Window
             var id = apps[i];
             var row = new DockPanel { Margin = new Thickness(0, 2, 0, 2) };
 
-            var remove = SmallButton("", "Remove");
+            var remove = SmallButton("", "Убрать");
             remove.Click += (_, _) => EditQuickApps(list => list.RemoveAt(index));
             DockPanel.SetDock(remove, Dock.Right);
             row.Children.Add(remove);
 
-            var up = SmallButton("", "Move left");
+            var up = SmallButton("", "Сдвинуть выше");
             up.IsEnabled = index > 0;
             up.Click += (_, _) => EditQuickApps(list => (list[index - 1], list[index]) = (list[index], list[index - 1]));
             DockPanel.SetDock(up, Dock.Right);
@@ -773,7 +1031,7 @@ public partial class SettingsWindow : Window
             row.Children.Add(icon);
             row.Children.Add(new TextBlock
             {
-                Text = QuickAppsService.GetName(id) ?? "(not installed)",
+                Text = QuickAppsService.GetName(id) ?? "(не установлено)",
                 VerticalAlignment = VerticalAlignment.Center,
                 TextTrimming = TextTrimming.CharacterEllipsis,
             });
@@ -786,7 +1044,7 @@ public partial class SettingsWindow : Window
         var add = new Button
         {
             Style = (Style)FindResource("ChipButton"),
-            Content = "Add app…",
+            Content = "+ Добавить приложение…",
             Margin = new Thickness(0, 6, 0, 0),
             HorizontalAlignment = HorizontalAlignment.Left,
         };
@@ -802,18 +1060,18 @@ public partial class SettingsWindow : Window
 
     private async Task BuildPickerAsync(StackPanel picker)
     {
-        var search = new TextBox { Margin = new Thickness(0, 0, 0, 6) };
+        var search = new TextBox { Margin = new Thickness(0, 0, 0, 6), ToolTip = "Поиск по меню Пуск" };
         var results = new StackPanel();
         picker.Children.Add(search);
         var resultsScroller = new ScrollViewer
         {
-            MaxHeight = 260,
+            MaxHeight = 240,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             Content = results,
         };
         WheelScrolling.Attach(resultsScroller, pixelsPerNotch: 36);
         picker.Children.Add(resultsScroller);
-        results.Children.Add(new TextBlock { Text = "Loading apps…", Foreground = Faint });
+        results.Children.Add(new TextBlock { Text = "Загружаю список приложений…", Foreground = Faint });
         search.Focus();
 
         _installedApps ??= await QuickAppsService.ListAsync();
@@ -822,22 +1080,20 @@ public partial class SettingsWindow : Window
         {
             results.Children.Clear();
             var query = search.Text.Trim();
-            // Icons are extracted per row, so cap the list; typing narrows it.
             var matches = _installedApps
                 .Where(a => !_settings.QuickApps.Contains(a.Id)
                             && (query.Length == 0 || a.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase)))
                 .Take(40)
                 .ToList();
-            if (matches.Count == 0) results.Children.Add(new TextBlock { Text = "No matching apps", Foreground = Faint });
+            if (matches.Count == 0) results.Children.Add(new TextBlock { Text = "Приложения не найдены", Foreground = Faint });
             foreach (var app in matches)
             {
-                // A plain row rather than a Button: the shared button template centers its content.
                 var item = new Border
                 {
                     Background = Brushes.Transparent,
                     CornerRadius = new CornerRadius(6),
                     Padding = new Thickness(8, 4, 8, 4),
-                    Cursor = System.Windows.Input.Cursors.Hand,
+                    Cursor = Cursors.Hand,
                     Child = new StackPanel
                     {
                         Orientation = Orientation.Horizontal,
@@ -876,209 +1132,6 @@ public partial class SettingsWindow : Window
         Content = new TextBlock { Style = (Style)FindResource("Glyph"), Text = glyph, FontSize = 11 },
     };
 
-    private void CustomColorRow(Panel panel)
-    {
-        var row = new WrapPanel { Margin = new Thickness(0, 4, 0, 4) };
-        foreach (var hex in Swatches)
-        {
-            var color = (Color)ColorConverter.ConvertFromString(hex);
-            var swatch = new Button
-            {
-                Style = (Style)FindResource("IconButton"),
-                Width = 28,
-                Height = 28,
-                Margin = new Thickness(0, 0, 6, 0),
-                ToolTip = hex,
-                Content = new Ellipse { Width = 18, Height = 18, Fill = new SolidColorBrush(color) },
-            };
-            swatch.Click += (_, _) => SetCustomColor(hex);
-            row.Children.Add(swatch);
-        }
-
-        var box = new TextBox { Text = _settings.CustomAccent, Width = 90, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 0, 0) };
-        box.TextChanged += (_, _) =>
-        {
-            if (_loading) return;
-            try
-            {
-                if (ColorConverter.ConvertFromString(box.Text.Trim()) is Color)
-                    SetCustomColor(box.Text.Trim(), updateBox: false);
-            }
-            catch (FormatException) { /* still typing */ }
-        };
-        row.Children.Add(box);
-        _customColorBox = box;
-        panel.Children.Add(row);
-    }
-
-    private TextBox? _customColorBox;
-
-    private void SetCustomColor(string hex, bool updateBox = true)
-    {
-        Update(() =>
-        {
-            _settings.CustomAccent = hex;
-            _settings.AccentSource = AccentSource.Custom;
-        });
-        if (updateBox && _customColorBox is not null)
-        {
-            _loading = true;
-            _customColorBox.Text = hex;
-            _loading = false;
-        }
-        // Reflect the switch to "Custom" in the accent choice.
-        Build();
-    }
-
-    // ---------------------------------------------------------------- builders
-
-    private readonly List<(TextBlock Header, Border Item)> _nav = new();
-    private Border? _navSelected;
-
-    private void CustomDesignColors(StackPanel panel)
-    {
-        var row=new WrapPanel { Margin=new Thickness(0,8,0,12) };
-        TextBox Field(string title,string value) { var col=new StackPanel{Margin=new Thickness(0,0,10,0)}; col.Children.Add(new TextBlock{Text=title,Opacity=.65,Margin=new Thickness(0,0,0,5)}); var box=new TextBox{Text=value,Width=112}; col.Children.Add(box); row.Children.Add(col); return box; }
-        var accent=Field("Акцент",_settings.DesignAccent); var bg=Field("Фон",_settings.DesignBackground); var text=Field("Текст",_settings.DesignText);
-        var apply=new Button{Content="Применить цвета",Margin=new Thickness(0,16,0,0)};
-        var feedback=new TextBlock{TextWrapping=TextWrapping.Wrap,Opacity=.65};
-        apply.Click+=(_,_)=> { if(new[]{accent.Text,bg.Text,text.Text}.Any(v=>!System.Text.RegularExpressions.Regex.IsMatch(v,"^#[0-9a-fA-F]{6}$"))) { feedback.Text="Введите цвета в формате #RRGGBB."; return; } _settings.DesignPreset="Custom"; _settings.DesignAccent=accent.Text; _settings.DesignBackground=bg.Text; _settings.DesignText=text.Text; HoshinoPalette.Apply(_settings); Update(() => {}); feedback.Text="Своя палитра применена."; };
-        row.Children.Add(apply);panel.Children.Add(row);panel.Children.Add(feedback);
-    }
-
-    private static string SectionName(string title) => title switch
-    {
-        "MATERIAL" => "Материал", "ADAPTIVE BACKGROUND" => "Прозрачность", "COLORS" => "Цвета", "INTERACTION" => "Управление",
-        "ASSISTANT" => "Помощник и аккаунт", "STYLE" => "Внешний вид", "TEXT & CLOCK" => "Текст и часы", "ANIMATION" => "Анимации", "ANIMATIONS" => "Анимации",
-        "MEDIA" => "Музыка и текст песни", "ACTIVITIES" => "Таймер и секундомер", "ALARMS" => "Будильники", "WALLPAPER ENGINE" => "Wallpaper Engine", "EXPANDED ISLAND" => "Вкладки островка",
-        "NOTIFICATIONS & WINDOWS CALENDAR" => "Уведомления Windows", "CALENDAR" => "Календарь", "TO-DO & NOTES" => "Задачи и заметки", "FILE SHELF" => "Полка файлов", "WEATHER" => "Погода",
-        "QUICK APPS" => "Приложения", "ALERTS" => "Сигналы", "POSITION" => "Расположение", "SYSTEM" => "Система", "UPDATES" => "Обновления", "ABOUT" => "О программе", _ => title
-    };
-    private StackPanel Section(string title, string? navLabel = null)
-    {
-        var header = new TextBlock { Text = SectionName(title), FontSize = 25, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 18) };
-        var panel = new StackPanel();
-        var content = new StackPanel(); content.Children.Add(header); content.Children.Add(panel);
-        var card = new Border { BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(18), Padding = new Thickness(22), Margin = new Thickness(0, 18, 0, 0), Child = content, Visibility = Visibility.Collapsed };
-        card.SetResourceReference(Border.BackgroundProperty, "HoshinoSurface"); card.SetResourceReference(Border.BorderBrushProperty,"HoshinoBorder"); header.Tag = card; Sections.Children.Add(card); AddNavItem(SectionName(title), header); return panel;
-    }
-
-    /// <summary>A sidebar entry that scrolls its section's header to the top.</summary>
-    private void AddNavItem(string title, TextBlock header)
-    {
-        var item = new Border
-        {
-            CornerRadius = new CornerRadius(6),
-            Padding = new Thickness(12, 10, 12, 10),
-            Margin = new Thickness(0, 0, 0, 2),
-            Background = Brushes.Transparent,
-            Cursor = System.Windows.Input.Cursors.Hand,
-            Child = new TextBlock
-            {
-                Text = title,
-                FontSize = 13,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-            },
-        };
-        item.MouseEnter += (_, _) => { if (item != _navSelected) item.Background = Hover; };
-        item.MouseLeave += (_, _) => { if (item != _navSelected) item.Background = Brushes.Transparent; };
-        item.MouseLeftButtonUp += (_, _) =>
-        {
-            SelectSection(header, item);
-        };
-        Nav.Children.Add(item);
-        _nav.Add((header, item));
-        CategorySelector.Items.Add(new ComboBoxItem { Content=title, Tag=header });
-    }
-
-    /// <summary>Highlights the sidebar entry of the section at the top of the view.</summary>
-    private void SelectSection(TextBlock header, Border item)
-    {
-        foreach (var entry in _nav) if (entry.Header.Tag is Border card) card.Visibility = entry.Header == header ? Visibility.Visible : Visibility.Collapsed;
-        if (_navSelected is not null) _navSelected.Background = Brushes.Transparent;
-        _navSelected = item; item.Background = Selected; SettingsScroller.ScrollToTop();
-    }
-    private void UpdateNavSelection()
-    {
-        if (_navSelected is null && _nav.Count > 0 && IsLoaded) { SelectSection(_nav[0].Header, _nav[0].Item); CategorySelector.SelectedIndex=0; }
-    }
-
-    private static string LabelName(string value) => value switch
-    {
-        "Shape" => "Форма",
-        "Size" => "Размер",
-        "Corner roundness" => "Скругление углов",
-        "Outline width" => "Толщина контура",
-        "Outline opacity" => "Яркость контура",
-        "Shadow" => "Тень",
-        "Text shadow on see-through materials (keeps text readable)" => "Тень текста на прозрачной поверхности",
-        "Fade over the desktop; use the full material when an app is behind the island" => "Приглушать на рабочем столе; полный материал поверх приложения",
-        "Opacity over desktop" => "Яркость на рабочем столе",
-        "Always use the full material while expanded" => "Полный материал в раскрытом виде",
-        "Accent" => "Акцент",
-        "Background tint" => "Оттенок фона",
-        "Font" => "Шрифт",
-        "Clock" => "Формат часов",
-        "Show seconds" => "Показывать секунды",
-        "Show the date in the idle pill" => "Показывать дату в компактном виде",
-        "When idle" => "Без активных задач",
-        "Expand on hover (click always works)" => "Раскрывать при наведении",
-        "Hover delay" => "Задержка наведения",
-        "Collapse delay" => "Задержка сворачивания",
-        "Speed" => "Скорость",
-        "Bounciness" => "Упругость",
-        "Show album art banner when expanded" => "Баннер обложки в раскрытом виде",
-        "Animated album art from Apple Music" => "Анимированные обложки Apple Music",
-        "Show a second activity as a bubble beside the island (e.g. music while a timer runs)" => "Вторая активность рядом с островком",
-        "Music bars follow the actual sound" => "Индикатор музыки следует звуку",
-        "Clicking the music activity opens the music app (hover still expands)" => "Нажатие на музыку открывает плеер",
-        "Show wallpaper controls when Wallpaper Engine is running" => "Показывать управление Wallpaper Engine",
-        "Mute the wallpaper while music is playing" => "Приглушать обои во время музыки",
-        "Navigation" => "Навигация",
-        "Show when an app is using the microphone or camera" => "Показывать использование микрофона и камеры",
-        "Show other apps' notifications in the island" => "Показывать входящие уведомления в островке",
-        "Hide the message text (show only which app)" => "Скрывать текст уведомлений",
-        "Notification alerts" => "Длительность уведомления",
-        "Show the Calendar page" => "Вкладка календаря",
-        "Include calendars added to Windows (Outlook, Calendar app accounts)" => "Подключить системный календарь Windows",
-        "Remind me" => "Напоминать за",
-        "Show the To-Do page" => "Вкладка задач",
-        "Show the Notes page" => "Вкладка заметок",
-        "Show the Shelf page (drag files onto the island to keep them)" => "Вкладка полки файлов",
-        "Keep files on the shelf after dragging them out" => "Оставлять файлы на полке после перетаскивания",
-        "Show the Weather page" => "Вкладка погоды",
-        "Location" => "Местоположение",
-        "Units" => "Единицы",
-        "Show the weather next to the clock" => "Погода рядом с часами",
-        "Icon size" => "Размер значков",
-        "Show when a device connects or disconnects (USB, Bluetooth, monitors)" => "Подключение и отключение устройств",
-        "Microphone muted, Energy Saver, Wi-Fi and VPN changes" => "Микрофон, энергосбережение, Wi-Fi и VPN",
-        "Do Not Disturb turning on or off" => "Переключение «Не беспокоить»",
-        "Copied to clipboard" => "Копирование в буфер",
-        "Show the copied text in the alert" => "Показывать скопированный текст",
-        "Pasted (Ctrl+V or Shift+Insert)" => "Вставка (Ctrl+V или Shift+Insert)",
-        "Volume / brightness" => "Громкость / яркость",
-        "Battery & device alerts" => "Батарея и устройства",
-        "Top offset" => "Отступ сверху",
-        "Hide the Windows volume flyout" => "Скрыть системную панель громкости",
-        "Opacity" => "Прозрачность",
-        "Blur" => "Размытие",
-        "Shininess" => "Блики",
-        "Tint" => "Оттенок",
-        "Blur engine" => "Движок размытия",
-        "Dynamic Island" => "Остров",
-        "Notch" => "Вырез",
-        "Opaque" => "Непрозрачный",
-        "Translucent" => "Полупрозрачный",
-        "Show clock" => "Показывать часы",
-        "Minimal pill" => "Минимальный вид",
-        "System" => "Системный",
-        "Tabs" => "Вкладки",
-        "Page dots" => "Точки",
-        "Off" => "Выкл.",
-        _ => value
-    };
-
     private static void Note(Panel panel, string text) =>
         panel.Children.Add(new TextBlock
         {
@@ -1086,24 +1139,23 @@ public partial class SettingsWindow : Window
             Foreground = Faint,
             FontSize = 12,
             TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, 2, 0, 4),
+            Margin = new Thickness(0, 2, 0, 6),
         });
 
     private void Check(Panel panel, string label, Func<bool> get, Action<bool> set)
     {
-        var box = new CheckBox { IsChecked = get(), Content = new TextBlock { Text = LabelName(label), TextWrapping = TextWrapping.Wrap } };
+        var box = new CheckBox { IsChecked = get(), Content = new TextBlock { Text = label, TextWrapping = TextWrapping.Wrap } };
         box.Click += (_, _) => Update(() => set(box.IsChecked == true));
         panel.Children.Add(box);
     }
 
-    private void Choice<T>(Panel panel, string? label, (T Value, string Text)[] options, Func<T> get, Action<T> set,
-        bool rebuildMaterialOptions = false)
+    private void Choice<T>(Panel panel, string? label, (T Value, string Text)[] options, Func<T> get, Action<T> set)
     {
-        var row = new Grid { Margin = new Thickness(0, 2, 0, 2) };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = label is null ? new GridLength(0) : new GridLength(150) });
+        var row = new Grid { Margin = new Thickness(0, 3, 0, 3) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = label is null ? new GridLength(0) : new GridLength(175) });
         row.ColumnDefinitions.Add(new ColumnDefinition());
         if (label is not null)
-            row.Children.Add(new TextBlock { Text = LabelName(label), VerticalAlignment = VerticalAlignment.Center });
+            row.Children.Add(new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) });
 
         var group = $"g{_groupId++}";
         var wrap = new WrapPanel();
@@ -1112,14 +1164,13 @@ public partial class SettingsWindow : Window
             var radio = new RadioButton
             {
                 GroupName = group,
-                Content = LabelName(text),
+                Content = text,
                 IsChecked = EqualityComparer<T>.Default.Equals(get(), value),
             };
             radio.Checked += (_, _) =>
             {
                 if (_loading) return;
                 Update(() => set(value));
-                if (rebuildMaterialOptions) BuildMaterialOptions();
             };
             wrap.Children.Add(radio);
         }
@@ -1132,9 +1183,9 @@ public partial class SettingsWindow : Window
         Func<double> get, Action<double> set, Func<double, string> format)
     {
         var row = new Grid { Margin = new Thickness(0, 4, 0, 4) };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(185) });
         row.ColumnDefinitions.Add(new ColumnDefinition());
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(64) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(70) });
 
         var slider = new Slider
         {
@@ -1159,7 +1210,7 @@ public partial class SettingsWindow : Window
             Update(() => set(e.NewValue));
         };
 
-        var text = new TextBlock { Text = LabelName(label), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0,0,10,0), VerticalAlignment = VerticalAlignment.Center };
+        var text = new TextBlock { Text = label, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center };
         Grid.SetColumn(slider, 1);
         Grid.SetColumn(value, 2);
         row.Children.Add(text);
@@ -1194,4 +1245,3 @@ public partial class SettingsWindow : Window
 
     private void OnCloseClick(object sender, RoutedEventArgs e) => Close();
 }
-

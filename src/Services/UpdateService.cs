@@ -31,14 +31,14 @@ public sealed record UpdateInfo(Version Version, string Tag, string PageUrl, str
 /// only the Install button and confirmation launch the verified installer.</summary>
 public sealed class UpdateService
 {
-    public const string Repository = "Takayom1/Dynamic-insland";
+    public const string Repository = "Takayom1/hoshibar";
 
     // Must stay above Http: static fields initialise in declaration order, and the client's user agent
     // needs the version (in the other order it was null, the user agent invalid, and the type unusable).
     public static Version CurrentVersion { get; } =
         typeof(UpdateService).Assembly.GetName().Version is { } v ? new Version(v.Major, v.Minor, Math.Max(0, v.Build)) : new Version(0, 0, 0);
 
-    private static readonly Regex InstallerName = new(@"^Hoshino-Island-Setup-(\d+\.\d+\.\d+)\.exe$", RegexOptions.IgnoreCase);
+    private static readonly Regex InstallerName = new(@"^HoshiBar-Setup-(\d+\.\d+\.\d+)\.exe$", RegexOptions.IgnoreCase);
     private string? downloadedHash;
     private static readonly HttpClient Http = CreateClient();
 
@@ -174,7 +174,7 @@ public sealed class UpdateService
         if (State != UpdateState.ReadyToInstall || DownloadedInstaller is not { } installer || !File.Exists(installer)) return;
         if (!Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(installer))).Equals(downloadedHash, StringComparison.OrdinalIgnoreCase))
             throw new IOException("Установщик изменился после проверки");
-        if (System.Windows.MessageBox.Show("Запустить установщик Hoshino Island? Остров будет закрыт, личные данные сохранятся.", "Обновление", System.Windows.MessageBoxButton.YesNo) != System.Windows.MessageBoxResult.Yes) return;
+        if (System.Windows.MessageBox.Show("Запустить установщик HoshiBar? Приложение будет закрыто, личные данные сохранятся.", "Обновление", System.Windows.MessageBoxButton.YesNo) != System.Windows.MessageBoxResult.Yes) return;
         SetState(UpdateState.Installing);
         // !identity: the notification setup stays registered across updates (same folder), so don't run it again.
         const string arguments = "/CURRENTUSER /NORESTART";
@@ -304,7 +304,7 @@ public sealed class UpdateService
     private static HttpClient CreateClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd($"Hoshino-Island/{CurrentVersion}");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd($"HoshiBar/{CurrentVersion}");
         return client;
     }
 

@@ -1,4 +1,4 @@
-// Original Hoshino Island code: Copyright (c) 2026 Takayom1
+// Original HoshiBar code: Copyright (c) 2026 Takayom1
 // SPDX-License-Identifier: MIT
 // Scope and artwork exclusions: see LICENSING.md.
 using System.IO;
@@ -10,11 +10,50 @@ public sealed class AssistantPreferences
     public static string DataDirectory => DataDirectoryOverride ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GlassChat");
     public static AssistantPreferences Current { get; private set; } = Load();
     public static event Action? Changed;
+    public string Provider { get; set; } = AssistantProviders.Codex;
     public string Model { get; set; } = "";
+    public string GeminiModel { get; set; } = "";
+    public string ClaudeModel { get; set; } = "";
     public string WorkingDirectory { get; set; } = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
     public string Vault { get; set; } = "";
     public string AccessMode { get; set; } = "workspace-write";
     public string CodexExecutable { get; set; } = "";
+    public string GeminiExecutable { get; set; } = "";
+    public string ClaudeExecutable { get; set; } = "";
+
+    public string GetModelFor(string? provider) => AssistantProviders.Normalize(provider) switch
+    {
+        AssistantProviders.Gemini => GeminiModel,
+        AssistantProviders.Claude => ClaudeModel,
+        _ => Model,
+    };
+
+    public void SetModelFor(string? provider, string value)
+    {
+        switch (AssistantProviders.Normalize(provider))
+        {
+            case AssistantProviders.Gemini: GeminiModel = value; break;
+            case AssistantProviders.Claude: ClaudeModel = value; break;
+            default: Model = value; break;
+        }
+    }
+
+    public string GetExecutableFor(string? provider) => AssistantProviders.Normalize(provider) switch
+    {
+        AssistantProviders.Gemini => GeminiExecutable,
+        AssistantProviders.Claude => ClaudeExecutable,
+        _ => CodexExecutable,
+    };
+
+    public void SetExecutableFor(string? provider, string value)
+    {
+        switch (AssistantProviders.Normalize(provider))
+        {
+            case AssistantProviders.Gemini: GeminiExecutable = value; break;
+            case AssistantProviders.Claude: ClaudeExecutable = value; break;
+            default: CodexExecutable = value; break;
+        }
+    }
     public string RecognitionCulture { get; set; } = "ru-RU";
     public string RecognitionEngine {get;set;}="vosk";
     public string WhisperModel {get;set;}="";
@@ -30,16 +69,19 @@ public sealed class AssistantPreferences
     public int VoiceRate {get;set;} = -1;
     public bool NeuralEnabled {get;set;}
     public string NeuralModel {get;set;}="";
-    public string NeuralSpeaker {get;set;}="baya";
+    public string NeuralSpeaker {get;set;}="xenia";
     public bool RvcEnabled {get;set;}
     public string RvcPython {get;set;}="";
     public string RvcEngine {get;set;}="";
     public string RvcModel {get;set;}="";
     public string RvcIndex {get;set;}="";
+    public int RvcPitch {get;set;}=1;
+    public double RvcIndexRate {get;set;}=0.30;
+    public double RvcProtect {get;set;}=0.42;
     public string Instructions { get; set; } = DefaultInstructions;
     public const string PersonaInstructions = """
 [HOSHINO_ROLE_V1]
-Ты — Таканаши Хошино в общении внутри Hoshino Island, личный помощник пользователя в образе персонажа Blue Archive. Это художественный образ: не выдавай вымышленные события за реальные воспоминания о пользователе и не придумывай канонические факты.
+Ты — Таканаши Хошино в общении внутри HoshiBar, личный помощник пользователя в образе персонажа Blue Archive. Это художественный образ: не выдавай вымышленные события за реальные воспоминания о пользователе и не придумывай канонические факты.
 Сохраняй многогранный характер Хошино. Снаружи ты расслабленная, сонная, с мягкой иронией; иногда шутишь о себе как о «старичке», не любишь лишнюю суету и бессмысленную работу. При этом ты наблюдательная, опытная, самостоятельная, заботишься о своих и становишься спокойной и решительной, когда действительно нужна помощь. Не своди личность к сну, рыбам и бесконечному утешению.
 Выбирая, как помочь, сначала замечай состояние человека и реальную важность задачи. Ищи практичное решение без лишней нагрузки и показного героизма. В обычном разговоре допускай любопытство, лёгкие подколы, бытовые наблюдения, еду, музыку, погоду, неожиданную мысль или короткую шутку. Не превращай каждый ответ в совет по продуктивности. Можно просто поболтать.
 Говори по-русски естественно и тепло, чаще короткими фразами. «Ухе…», зевки и «старичок» — редкие оттенки, а не обязательные вставки. Не копируй одну манеру во всех сообщениях, не используй навязчивые сценические ремарки и не пересказывай пользователю свою роль. Не называй пользователя сэнсэем по умолчанию; подстраивай обращение под его предпочтения. Не обесценивай переживания, не сюсюкай, не ставь диагнозы.
@@ -63,12 +105,19 @@ public sealed class AssistantPreferences
         try {
             var value=JsonSerializer.Deserialize<AssistantPreferences>(File.ReadAllText(Path.Combine(DataDirectory, "assistant.json"))) ?? new();
             if(!value.Instructions.Contains("[HOSHINO_ROLE_V1]"))value.Instructions=PersonaInstructions+"\n\n"+value.Instructions;
+            HoshinoVoicePack.TryBindIfUnconfigured(value);
             return value;
         }
-        catch (Exception e) when (e is IOException or JsonException) { return new(); }
+        catch (Exception e) when (e is IOException or JsonException)
+        {
+            var fresh = new AssistantPreferences();
+            HoshinoVoicePack.TryBindIfUnconfigured(fresh);
+            return fresh;
+        }
     }
     public void Save(bool notify = true)
     {
+        Provider = AssistantProviders.Normalize(Provider);
         if (!Directory.Exists(WorkingDirectory)) throw new IOException("Рабочая папка не существует");
         if (Vault.Length > 0 && !Directory.Exists(Vault)) throw new IOException("Vault не существует");
         if (!new[] { "read-only", "workspace-write", "danger-full-access" }.Contains(AccessMode)) throw new IOException("Неизвестный режим доступа");
@@ -80,6 +129,7 @@ public sealed class AssistantPreferences
 public static class AssistantRuntime
 {
     public static CodexBridge Bridge { get; } = new();
+    public static AssistantProviderRouter Router { get; } = new(Bridge);
     public static AssistantVoice? Voice {get;set;}
     public static bool Busy { get; set; }
     public static string? ActiveThread { get; set; }

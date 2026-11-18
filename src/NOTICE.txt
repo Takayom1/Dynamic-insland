@@ -48,3 +48,6 @@ HOSHINO ISLAND 0.11: Compact calendar and Markdown journal, selected-vault integ
 HOSHINO ISLAND 0.12
 Project by Takayom1, developed with Codex. https://github.com/Takayom1 | https://t.me/takayom1
 Original standalone Hoshino components are MIT licensed; inherited components remain under the D-Island License 1.0. See LICENSING.md for exact scope.
+
+HOSHIBAR
+Project rebranded to HoshiBar (HoshiBar.exe) by Takayom1 (https://github.com/Takayom1/hoshibar). Original standalone HoshiBar components are MIT licensed (LICENSE-HOSHIBAR-MIT.txt); inherited upstream components remain under the D-Island License 1.0 (LICENSE.txt). Not an official D-Island release.

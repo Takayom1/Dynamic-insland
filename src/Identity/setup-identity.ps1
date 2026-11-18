@@ -1,7 +1,7 @@
 ﻿# D-Island - Copyright 2026 h7 (ibuildrigs) and contributors.
 # Licensed under the D-Island License 1.0; see LICENSE.txt and NOTICE.txt.
 
-# Gives HoshinoIsland.exe a package identity (needed for reading notifications and the Windows calendar) by
+# Gives HoshiBar.exe a package identity (needed for reading notifications and the Windows calendar) by
 # registering a *sparse* package: only a manifest, whose "external location" is the folder holding the
 # exe. Nothing is copied or installed besides that registration.
 #
@@ -27,7 +27,7 @@ New-Item -ItemType Directory -Force $work | Out-Null
 Start-Transcript -Path $log -Force | Out-Null
 
 try {
-    if (-not (Test-Path (Join-Path $ExeDir 'HoshinoIsland.exe'))) { throw "HoshinoIsland.exe not found in $ExeDir" }
+    if (-not (Test-Path (Join-Path $ExeDir 'HoshiBar.exe'))) { throw "HoshiBar.exe not found in $ExeDir" }
 
     # Validate the sparse-package contract before downloading, signing or trusting anything.
     if ([Environment]::OSVersion.Version.Build -lt 19041) { throw 'Sparse identity requires Windows build 19041 or later.' }
@@ -65,7 +65,7 @@ try {
     New-Item -ItemType Directory -Force (Join-Path $stage 'Assets') | Out-Null
     Copy-Item (Join-Path $PSScriptRoot 'AppxManifest.xml') $stage
 
-    # Logos: the distinct GlassDesk speech-bubble icon.
+    # Logos: the distinct HoshiBar companion icon.
     Add-Type -AssemblyName System.Drawing
     foreach ($logo in @(@('StoreLogo.png', 50), @('Square44x44Logo.png', 44), @('Square150x150Logo.png', 150))) {
         $size = $logo[1]
@@ -73,7 +73,7 @@ try {
         $g = [System.Drawing.Graphics]::FromImage($bmp)
         $g.SmoothingMode = 'AntiAlias'
         $g.Clear([System.Drawing.Color]::Transparent)
-        $appIcon = [System.Drawing.Icon]::new((Join-Path $ExeDir 'GlassDesk.ico'))
+        $appIcon = [System.Drawing.Icon]::new((Join-Path $ExeDir 'HoshiBar.ico'))
         $iconBitmap = $appIcon.ToBitmap()
         $g.DrawImage($iconBitmap, 0, 0, $size, $size)
         $iconBitmap.Dispose(); $appIcon.Dispose()
@@ -124,9 +124,9 @@ try {
 
     if ($Restart) {
         # Identity applies to processes started after registration.
-        Get-Process DIsland -ErrorAction SilentlyContinue | Stop-Process -Force
+        Get-Process HoshiBar, HoshinoIsland, DIsland -ErrorAction SilentlyContinue | Stop-Process -Force
         Start-Sleep -Milliseconds 800
-        Start-Process (Join-Path $ExeDir 'HoshinoIsland.exe')
+        Start-Process (Join-Path $ExeDir 'HoshiBar.exe')
     }
     Write-Host 'OK'
     $code = 0

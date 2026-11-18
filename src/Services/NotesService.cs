@@ -61,6 +61,9 @@ public sealed class NotesService : IDisposable
     /// <summary>The list changed (not raised for note typing, which the text box itself shows).</summary>
     public event Action? Changed;
 
+    /// <summary>Raised when an open task is marked completed; second argument is true when zero open tasks remain.</summary>
+    public event Action<TodoItem, bool>? TaskCompleted;
+
     public string Note
     {
         get => _note;
@@ -101,6 +104,7 @@ public sealed class NotesService : IDisposable
         if (_todos.FirstOrDefault(t => t.Id == id) is not { } item || item.Done == done) return;
         item.Done = done;
         SaveAndNotify();
+        if (done) TaskCompleted?.Invoke(item, OpenCount == 0);
     }
 
     public void Remove(Guid id)

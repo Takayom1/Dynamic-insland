@@ -326,19 +326,43 @@ public sealed class MediaService : IDisposable
     {
         if (IsSpotify(appId)) return "Spotify";
         if (IsAppleMusic(appId)) return "Apple Music";
-        if (appId.Contains("ZuneMusic", StringComparison.OrdinalIgnoreCase)) return "Media Player";
+        if (appId.Contains("ZuneMusic", StringComparison.OrdinalIgnoreCase)) return "Медиаплеер";
+        if (appId.Contains("YandexMusic", StringComparison.OrdinalIgnoreCase) || appId.Contains("Yandex.Music", StringComparison.OrdinalIgnoreCase)) return "Яндекс Музыка";
+        if (appId.Contains("Yandex", StringComparison.OrdinalIgnoreCase) || appId.Contains("browser.exe", StringComparison.OrdinalIgnoreCase)) return "Яндекс Браузер";
         if (appId.Contains("Chrome", StringComparison.OrdinalIgnoreCase)) return "Chrome";
         if (appId.Contains("MSEdge", StringComparison.OrdinalIgnoreCase)) return "Edge";
-        if (appId.Contains("Firefox", StringComparison.OrdinalIgnoreCase)) return "Firefox";
+        if (appId.Contains("Firefox", StringComparison.OrdinalIgnoreCase) || appId.Contains("308046B0AF4A39CB", StringComparison.OrdinalIgnoreCase)) return "Firefox";
+        if (appId.Contains("Brave", StringComparison.OrdinalIgnoreCase)) return "Brave";
+        if (appId.Contains("Vivaldi", StringComparison.OrdinalIgnoreCase)) return "Vivaldi";
+        if (appId.Contains("Opera", StringComparison.OrdinalIgnoreCase)) return "Opera";
+        if (appId.Contains("Telegram", StringComparison.OrdinalIgnoreCase)) return "Telegram";
+        if (appId.Contains("AIMP", StringComparison.OrdinalIgnoreCase)) return "AIMP";
+        if (appId.Contains("foobar2000", StringComparison.OrdinalIgnoreCase)) return "foobar2000";
+        if (appId.Contains("vlc", StringComparison.OrdinalIgnoreCase)) return "VLC";
 
-        // "Foo.exe", "Publisher.App_hash!App" → "Foo", "App"
+        // "Foo.exe", "Publisher.App_hash!App", "Browser.9DED23DF4360B491" -> clean human-readable name
         var name = appId.Split('!')[0];
         if (name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) name = name[..^4];
         var underscore = name.IndexOf('_');
         if (underscore > 0) name = name[..underscore];
-        var dot = name.LastIndexOf('.');
-        if (dot >= 0 && dot < name.Length - 1) name = name[(dot + 1)..];
-        return name.Length > 0 ? name : "Media";
+
+        var parts = name.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        for (var i = parts.Length - 1; i >= 0; i--)
+        {
+            var token = parts[i];
+            if (!LooksLikeOpaqueHash(token))
+                return token;
+        }
+
+        return LooksLikeOpaqueHash(name) ? "Браузер" : (name.Length > 0 ? name : "Музыка");
+    }
+
+    private static bool LooksLikeOpaqueHash(string s)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return true;
+        if (s.Length >= 8 && s.All(Uri.IsHexDigit)) return true;
+        var digits = s.Count(char.IsDigit);
+        return s.Length >= 10 && digits >= 4 && s.All(char.IsLetterOrDigit);
     }
 
     private static async Task<Artwork?> LoadThumbnailAsync(IRandomAccessStreamReference? reference)

@@ -58,14 +58,20 @@ NodaTime is distributed unmodified.
 
 ----------------------------------------------------------------------------------------------------
 Installer
-The Hoshino Island installer uses Inno Setup (c) Jordan Russell and Martijn Laan,
+The HoshiBar installer uses Inno Setup (c) Jordan Russell and Martijn Laan,
 https://jrsoftware.org/isinfo.php, used under the Inno Setup licence (see Inno-Setup-LICENSE.txt).
 
 Online services used at run time (weather by Open-Meteo, https://open-meteo.com, CC BY 4.0 data;
 Apple and calendar providers) are described in PRIVACY.txt.
 
+----------------------------------------------------------------------------------------------------
+Bundled Theme Fonts (SIL Open Font License 1.1 — see Assets/Fonts/OFL-FONTS.txt)
+- Pixelify Sans — Copyright (c) Pixelify Sans Project Authors (https://github.com/eifetx/Pixelify-Sans)
+- Exo 2 — Copyright (c) Natanael Gama (https://github.com/NDISCOVER/Exo-2.0)
+- M PLUS Rounded 1c — Copyright (c) M+ FONTS PROJECT (https://mplusfonts.github.io)
 
-Hoshino Island design references (independent implementation):
+
+HoshiBar design references (independent implementation):
 Coucou — https://github.com/Louis-CFM/coucou
 MIT License
 
@@ -112,7 +118,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-Hoshino Island 0.13 voice components:
+HoshiBar voice components:
 NAudio 2.2.1, Copyright Mark Heath and contributors, MIT: see NAudio-LICENSE.txt. https://github.com/naudio/NAudio
 Vosk 0.3.38, Apache-2.0: see Vosk-LICENSE.txt. https://github.com/alphacep/vosk-api
 Vosk small Russian model 0.22, Apache-2.0: see Speech-Model-LICENSE.txt and Assets/Speech/vosk-model-small-ru-0.22/README. https://alphacephei.com/vosk/models

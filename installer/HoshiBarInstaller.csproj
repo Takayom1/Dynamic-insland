@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType><TargetFramework>net8.0-windows</TargetFramework><UseWPF>true</UseWPF><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+    <AssemblyName>HoshiBar-Setup</AssemblyName><Version>1.0.0</Version><Company>Takayom1</Company><Product>HoshiBar Installer</Product>
+    <ApplicationIcon>../src/HoshiBar.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="$(PayloadPath)" LogicalName="HoshiBar.CoreSetup.exe" Condition="'$(PayloadPath)' != ''"/>
+    <AssemblyMetadata Include="PayloadSha256" Value="$(PayloadSha256)"/>
+    <EmbeddedResource Include="../LICENSING.md" LogicalName="HoshiBar.LICENSING.md"/>
+    <EmbeddedResource Include="../src/LICENSE.txt" LogicalName="HoshiBar.LICENSE.txt"/>
+    <EmbeddedResource Include="../LICENSE-HOSHIBAR-MIT.txt" LogicalName="HoshiBar.MIT.txt"/>
+    <EmbeddedResource Include="../src/THIRD-PARTY-NOTICES.txt" LogicalName="HoshiBar.THIRD-PARTY-NOTICES.txt"/>
+    <EmbeddedResource Include="../src/Inno-Setup-LICENSE.txt" LogicalName="HoshiBar.INNO.txt"/>
+  </ItemGroup>
+</Project>

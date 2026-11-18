@@ -1,4 +1,4 @@
-// Original Hoshino Island code: Copyright (c) 2026 Takayom1
+// Original HoshiBar code: Copyright (c) 2026 Takayom1
 // SPDX-License-Identifier: MIT
 // Scope and artwork exclusions: see LICENSING.md.
 using System.Windows;
@@ -23,10 +23,10 @@ public sealed class ObsidianSettingsPanel : StackPanel
         enabled.IsChecked=p.Enabled;Children.Add(enabled);
         AddText("При подключении локальные задачи объединятся с разделом Hoshino в заметке. Остальной текст заметки сохраняется. Ссылки/junction и .obsidian не затрагиваются. Резервные копии правок остаются локально вне vault.");
         ActionButton("Сохранить подключение",()=>{
-            if(AssistantRuntime.Busy)throw new InvalidOperationException("Сначала остановите ответ Codex");
+            if(AssistantRuntime.Busy)throw new InvalidOperationException("Сначала остановите активный ответ помощника");
             new ObsidianPreferences{Root=root.Text.Trim(),TasksNote=tasks.Text.Trim(),MemoryNote=memory.Text.Trim(),DailyFolder=daily.Text.Trim(),Enabled=enabled.IsChecked==true}.Save();
             memoryHash="";
-            AssistantRuntime.Bridge.Restart();status.Text=ObsidianSync.Active?.Status??"Сохранено";
+            AssistantRuntime.Router.RestartAll();status.Text=ObsidianSync.Active?.Status??"Сохранено";
         });
         ActionButton("Синхронизировать сейчас",()=>{ObsidianSync.Active?.Poll();status.Text=ObsidianSync.Active?.Status??"Остров не запущен";});
         ActionButton("Объединить оба варианта после конфликта",()=>{ObsidianSync.Active?.MergeAfterConflict();status.Text=ObsidianSync.Active?.Status??"Остров не запущен";});

@@ -1,4 +1,4 @@
-// Original Hoshino Island code: Copyright (c) 2026 Takayom1
+// Original HoshiBar code: Copyright (c) 2026 Takayom1
 // SPDX-License-Identifier: MIT
 // Scope and artwork exclusions: see LICENSING.md.
 using System.Collections.Concurrent;

@@ -66,12 +66,12 @@ public sealed class StateController
 
     public IslandView? Transient => _transient;
 
-    /// <summary>Running activities, most important first: timer > stopwatch > media.</summary>
+    /// <summary>Running activities: media stays in the main capsule while timer/stopwatch orbits in the side ring bubble.</summary>
     private IEnumerable<IslandView> Activities()
     {
+        if (_mediaPlaying) yield return IslandView.Media;
         if (_timerActive) yield return IslandView.Timer;
         if (_stopwatchActive) yield return IslandView.Stopwatch;
-        if (_mediaPlaying) yield return IslandView.Media;
     }
 
     public IslandView PersistentView => Activities().DefaultIfEmpty(IslandView.Clock).First();

@@ -65,19 +65,61 @@ public enum PageNavigation
     Dots,
 }
 
+public enum IslandSkin
+{
+    HorusGlass,
+    ShittimChest,
+    Win7Aero,
+    ChibiPop,
+    PixelTamagotchi,
+}
+
+public enum HoshinoAccessory
+{
+    Auto,
+    WhalePin,
+    SummerShades,
+    SleepMask,
+    None,
+}
+
 public sealed class AppSettings
 {
     // Hoshino / Coucou-inspired appearance. Existing accounts, permissions and lyrics state are untouched.
     public List<string> PageOrder { get; set; } = new();
-    public string DesignPreset { get; set; } = "Hoshino";
+
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public IslandSkin IslandSkin { get; set; } = IslandSkin.HorusGlass;
+
+    public string DesignPreset { get; set; } = "SakuraNap";
     public string DesignAccent { get; set; } = "#EAB0CF";
     public string DesignBackground { get; set; } = "#18141F";
     public string DesignText { get; set; } = "#F4EDF6";
     public bool ShowHoshino { get; set; } = true;
+    public bool ShowHoshinoHalo { get; set; } = true;
+
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public HoshinoAccessory HoshinoAccessory { get; set; } = HoshinoAccessory.Auto;
+
+    public bool ThemedMediaCovers { get; set; } = true;
+    public bool EnableHeadpat { get; set; } = true;
+    public bool PerimeterFocusTimer { get; set; } = true;
+    public bool WeatherRimEnabled { get; set; } = true;
+    public bool AbydosAquarium { get; set; }
+    public double GhostModeOpacity { get; set; } = 0.45;
+    public string GhostModeHotkey { get; set; } = "Ctrl+Alt+G";
+
+    [JsonIgnore]
+    public string? GhostHotkeyProblem { get; set; }
+
+    public string TrayLeftClickAction { get; set; } = "Flyout";
+    public string TrayMiddleClickAction { get; set; } = "PlayPause";
+    public bool TrayWhisperAlerts { get; set; } = true;
     public bool AnimateHoshino { get; set; } = true;
     public bool HoshinoFollowsCursor { get; set; } = true;
     public bool ReduceMotion { get; set; }
     public bool CompactDesign { get; set; }
+    public Guid? FocusTaskId { get; set; }
     public double CompanionSize { get; set; } = 100;
     public double PanelWidth { get; set; } = 560;
     public double CompactLyricWidth { get; set; } = 420;
@@ -321,11 +363,24 @@ public sealed class AppSettings
     {
         var d = new AppSettings();
         PageOrder = new();
+        IslandSkin = d.IslandSkin;
         DesignPreset = d.DesignPreset;
         DesignAccent = d.DesignAccent;
         DesignBackground = d.DesignBackground;
         DesignText = d.DesignText;
         ShowHoshino = d.ShowHoshino;
+        ShowHoshinoHalo = d.ShowHoshinoHalo;
+        HoshinoAccessory = d.HoshinoAccessory;
+        ThemedMediaCovers = d.ThemedMediaCovers;
+        EnableHeadpat = d.EnableHeadpat;
+        PerimeterFocusTimer = d.PerimeterFocusTimer;
+        WeatherRimEnabled = d.WeatherRimEnabled;
+        AbydosAquarium = d.AbydosAquarium;
+        GhostModeOpacity = d.GhostModeOpacity;
+        GhostModeHotkey = d.GhostModeHotkey;
+        TrayLeftClickAction = d.TrayLeftClickAction;
+        TrayMiddleClickAction = d.TrayMiddleClickAction;
+        TrayWhisperAlerts = d.TrayWhisperAlerts;
         AnimateHoshino = d.AnimateHoshino;
         HoshinoFollowsCursor = d.HoshinoFollowsCursor;
         ReduceMotion = d.ReduceMotion;
@@ -401,6 +456,15 @@ public sealed class AppSettings
                 if (settings.ThemeFromWallpaper == false && !json.Contains("\"AccentSource\""))
                     settings.AccentSource = AccentSource.MediaApp;
                 settings.ThemeFromWallpaper = null;
+
+                // Migrate legacy pre-T02 DesignPreset names cleanly to the 5 Horus Glass lore palettes.
+                settings.DesignPreset = settings.DesignPreset switch
+                {
+                    "Hoshino" or "" or null => "SakuraNap",
+                    "Abydos" => "AbydosOasis",
+                    "Graphite" => "IronHorus",
+                    _ => settings.DesignPreset,
+                };
 
                 return settings;
             }

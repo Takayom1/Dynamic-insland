@@ -1,4 +1,4 @@
-// Original Hoshino Island code: Copyright (c) 2026 Takayom1
+// Original HoshiBar code: Copyright (c) 2026 Takayom1
 // SPDX-License-Identifier: MIT
 using System.IO;
 using System.Speech.Recognition;
@@ -199,11 +199,12 @@ public sealed class AssistantVoice : IDisposable
         var selected=installed.FirstOrDefault(v=>v.VoiceInfo.Name==prefs.VoiceName)??installed.FirstOrDefault(v=>v.VoiceInfo.Culture.Name.StartsWith("ru"));
         if(selected==null){speaking=false;ArmLater();throw new InvalidOperationException("Русский голос Windows не установлен");}
         speaker.SelectVoice(selected.VoiceInfo.Name);speaker.Rate=Math.Clamp(prefs.VoiceRate,-5,5);speaker.Volume=(int)Math.Round(Math.Clamp(prefs.VoiceVolume,0,1)*100);speaker.SetOutputToDefaultAudioDevice();
+        StateChanged?.Invoke();
         speaker.SpeakAsync(text.Length>6000?text[..6000]:text);
     }
     private async Task SpeakConverted(string text)
     {
-        Silence();StopInput();speaking=true;var version=speechVersion;using var current=new CancellationTokenSource(TimeSpan.FromMinutes(3));conversion=current;var cancel=current.Token;System.Media.SoundPlayer? playback=null;
+        Silence();StopInput();speaking=true;StateChanged?.Invoke();var version=speechVersion;using var current=new CancellationTokenSource(TimeSpan.FromMinutes(3));conversion=current;var cancel=current.Token;System.Media.SoundPlayer? playback=null;
         var dir=Path.Combine(AssistantPreferences.DataDirectory,"speech-temp",Guid.NewGuid().ToString("N"));Directory.CreateDirectory(dir);var input=Path.Combine(dir,"source.wav");var output=Path.Combine(dir,"hoshino.wav");var textFile=Path.Combine(dir,"text.txt");
         var quietOutput=Path.Combine(dir,"playback.wav");
         var elapsed=System.Diagnostics.Stopwatch.StartNew();var stage="Ожидаю готовности нейроголоса";
@@ -215,9 +216,9 @@ public sealed class AssistantVoice : IDisposable
             else using(var tts=new SpeechSynthesizer()){var prefs=AssistantPreferences.Current;var name=Voices().FirstOrDefault(v=>v==prefs.VoiceName)??Voices().FirstOrDefault(v=>v.Contains("Irina"))??throw new IOException("Нужен русский голос Windows");tts.SelectVoice(name);tts.Rate=Math.Clamp(prefs.VoiceRate,-5,5);tts.SetOutputToWaveFile(input);var complete=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);tts.SpeakCompleted+=(_,e)=>{if(e.Error!=null)complete.TrySetException(e.Error);else complete.TrySetResult();};using var registration=cancel.Register(()=>tts.SpeakAsyncCancelAll());tts.SpeakAsync(text.Length>1500?text[..1500]:text);await complete.Task;cancel.ThrowIfCancellationRequested();}
             await worker.Render(textFile,input,output,message=>{stage=message;Report(stage+" · "+(int)elapsed.Elapsed.TotalSeconds+" с");},cancel);cancel.ThrowIfCancellationRequested();VoiceGain.Scale(output,quietOutput,AssistantPreferences.Current.VoiceVolume);progress.Stop();playback=new System.Media.SoundPlayer(quietOutput);player=playback;Report("Хошино говорит…");await Task.Run(()=>playback.PlaySync(),cancel);
         } catch(OperationCanceledException){}catch(Exception e){Report("Голос RVC недоступен: "+e.Message);}
-        finally {progress.Stop();playback?.Dispose();if(ReferenceEquals(player,playback))player=null;try{File.Delete(input);File.Delete(output);File.Delete(quietOutput);File.Delete(textFile);Directory.Delete(dir);}catch(IOException){}if(ReferenceEquals(conversion,current))conversion=null;if(version==speechVersion){speaking=false;if(lowPower)worker.Reset();ArmLater();}}
+        finally {progress.Stop();playback?.Dispose();if(ReferenceEquals(player,playback))player=null;try{File.Delete(input);File.Delete(output);File.Delete(quietOutput);File.Delete(textFile);Directory.Delete(dir);}catch(IOException){}if(ReferenceEquals(conversion,current))conversion=null;if(version==speechVersion){speaking=false;if(lowPower)worker.Reset();StateChanged?.Invoke();ArmLater();}}
     }
-    private SpeechSynthesizer CreateSpeaker(){var s=new SpeechSynthesizer();s.SpeakCompleted+=(_,_)=>ui.BeginInvoke(()=>{if(s.State==SynthesizerState.Ready){speaking=false;ArmLater();}});return s;}
-    public void Silence(){speechVersion++;conversion?.Cancel();player?.Stop();speaker?.SpeakAsyncCancelAll();speaking=false;ArmLater();}
+    private SpeechSynthesizer CreateSpeaker(){var s=new SpeechSynthesizer();s.SpeakCompleted+=(_,_)=>ui.BeginInvoke(()=>{if(s.State==SynthesizerState.Ready){speaking=false;StateChanged?.Invoke();ArmLater();}});return s;}
+    public void Silence(){speechVersion++;conversion?.Cancel();player?.Stop();speaker?.SpeakAsyncCancelAll();speaking=false;StateChanged?.Invoke();ArmLater();}
     public void Dispose(){Microsoft.Win32.SystemEvents.SessionSwitch-=SessionChanged;Microsoft.Win32.SystemEvents.PowerModeChanged-=PowerChanged;disposed=true;watchdog.Stop();Silence();StopInput();worker.Dispose();speaker?.Dispose();model?.Dispose();}
 }

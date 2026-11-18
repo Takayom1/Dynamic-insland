@@ -1,4 +1,4 @@
-# Original Hoshino Island adapter, Copyright 2026 Takayom1, MIT.
+# Original HoshiBar adapter, Copyright 2026 Takayom1, MIT.
 # Silero weights are separate and retain their own non-commercial license.
 import argparse,hashlib
 from pathlib import Path

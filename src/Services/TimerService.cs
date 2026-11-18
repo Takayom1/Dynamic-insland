@@ -18,11 +18,18 @@ public sealed class TimerService
 
     public bool IsActive { get; private set; }
     public bool IsPaused { get; private set; }
+    public TimeSpan TotalDuration { get; private set; }
 
     public TimeSpan Remaining =>
         !IsActive ? TimeSpan.Zero
         : IsPaused ? _pausedRemaining
         : Max(TimeSpan.Zero, _endUtc - DateTime.UtcNow);
+
+    /// <summary>Remaining fraction 0..1 for perimeter focus border and circular activity rings.</summary>
+    public double RemainingRatio =>
+        !IsActive || TotalDuration.Ticks <= 0
+            ? 0
+            : Math.Clamp(Remaining.TotalSeconds / TotalDuration.TotalSeconds, 0, 1);
 
     /// <summary>Remaining time changed (fires a few times per second while running).</summary>
     public event Action? Tick;
@@ -32,6 +39,7 @@ public sealed class TimerService
 
     public void Start(TimeSpan duration)
     {
+        TotalDuration = Max(TimeSpan.FromSeconds(1), duration);
         _endUtc = DateTime.UtcNow + duration;
         IsActive = true;
         IsPaused = false;
@@ -63,6 +71,7 @@ public sealed class TimerService
         if (!IsActive) return;
         if (IsPaused) _pausedRemaining += amount;
         else _endUtc += amount;
+        if (Remaining > TotalDuration) TotalDuration = Remaining;
         Tick?.Invoke();
     }
 
@@ -71,6 +80,7 @@ public sealed class TimerService
         if (!IsActive) return;
         IsActive = false;
         IsPaused = false;
+        TotalDuration = TimeSpan.Zero;
         _tick.Stop();
         StateChanged?.Invoke();
     }
@@ -95,6 +105,14 @@ public sealed class TimerService
         var m = total / 60 % 60;
         var s = total % 60;
         return h > 0 ? $"{h}:{m:00}:{s:00}" : $"{m:00}:{s:00}";
+    }
+
+    public static string FormatCompact(TimeSpan t)
+    {
+        var total = Math.Max(0, (int)Math.Ceiling(t.TotalSeconds));
+        if (total >= 3600) return $"{total / 3600}h";
+        if (total >= 60) return $"{(int)Math.Ceiling(total / 60.0)}m";
+        return $"{total}s";
     }
 
     private static TimeSpan Max(TimeSpan a, TimeSpan b) => a > b ? a : b;

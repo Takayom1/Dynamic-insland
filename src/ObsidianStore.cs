@@ -1,4 +1,4 @@
-// Original Hoshino Island code: Copyright (c) 2026 Takayom1
+// Original HoshiBar code: Copyright (c) 2026 Takayom1
 // SPDX-License-Identifier: MIT
 // Scope and artwork exclusions: see LICENSING.md.
 using System.IO;
@@ -16,9 +16,9 @@ public sealed class ObsidianPreferences
     public static event Action? Changed;
     public bool Enabled { get; set; }
     public string Root { get; set; } = "";
-    public string TasksNote { get; set; } = "Hoshino Island/Задачи.md";
-    public string MemoryNote { get; set; } = "Hoshino Island/Память.md";
-    public string DailyFolder { get; set; } = "Hoshino Island/Ежедневник";
+    public string TasksNote { get; set; } = "HoshiBar/Задачи.md";
+    public string MemoryNote { get; set; } = "HoshiBar/Память.md";
+    public string DailyFolder { get; set; } = "HoshiBar/Ежедневник";
     private static ObsidianPreferences Load()
     {
         try { return JsonSerializer.Deserialize<ObsidianPreferences>(File.ReadAllText(Path.Combine(AssistantPreferences.DataDirectory,"obsidian.json"))) ?? new(); }

@@ -1,22 +1,27 @@
-# Hoshino Island — лицензирование
+# HoshiBar — лицензирование
 
 Пути компонентов ниже указаны относительно src/.
 
-Проект Takayom1, разрабатывается с помощью Codex.
-GitHub: https://github.com/Takayom1
+Проект Takayom1.
+GitHub: https://github.com/Takayom1/hoshibar
 Telegram: https://t.me/takayom1
 
 ## Наш самостоятельный код: MIT
 
-Файл LICENSE-HOSHINO-MIT.txt применяется к оригинальному коду в перечисленных ниже файлах. Можно использовать, менять и распространять этот код, включая коммерческое использование, с сохранением уведомления MIT.
+Файл LICENSE-HOSHIBAR-MIT.txt применяется к оригинальному коду в перечисленных ниже файлах. Можно использовать, менять и распространять этот код, включая коммерческое использование, с сохранением уведомления MIT.
 
+- AbydosAquariumView.cs
 - AiChatPanel.cs
 - ApprovalDialog.cs
 - AssistantAccount.cs
 - AssistantPreferences.cs
+- AssistantProviderRouter.cs
 - AssistantSettingsPanel.cs
 - AssistantTheme.cs
 - AssistantVoice.cs
+- ClaudeCliBackend.cs
+- GeminiCliBackend.cs
+- LocalQrShareService.cs
 - LocalVoiceWorker.cs
 - SpeechClip.cs (включая VoiceGain)
 - AssistantCues.cs
@@ -24,14 +29,28 @@ Telegram: https://t.me/takayom1
 - WakeCalibrationWindow.cs
 - CodexBridge.cs
 - ConversationStore.cs
+- CoworkingBar.cs
+- DwmWindowBlur.cs
 - HomeTasksPanel.cs
+- HoshinoAccessories.cs
+- HoshinoAtmosphere.cs
 - HoshinoCompanion.cs
 - HoshinoPalette.cs
+- HoshinoVoicePack.cs
+- IslandChromeRenderer.cs
+- IslandMediaArtDecorator.cs
+- IslandSkinEngine.cs
+- IslandSkinPresets.cs
+- IslandWeatherRim.cs
 - JournalPanel.cs
 - LyricsPanel.cs
 - ObsidianSettingsPanel.cs
 - ObsidianStore.cs
 - PhraseDeck.cs
+- QrCodeVector.cs
+- SettingsSkinPresenter.cs
+- TrayFlyoutWindow.cs
+- TrayHoshinoIconRenderer.cs
 - Services/LyricsService.cs
 - Services/FullscreenService.cs
 
@@ -43,16 +62,16 @@ Telegram: https://t.me/takayom1
 
 Based on D-Island by h7 (ibuildrigs) - https://github.com/H7gamer/d-island
 
-Изменено Takayom1 с помощью Codex; не является официальным выпуском D-Island. Раздел 3 исходной лицензии требует видимого полного авторства и сохранения уведомлений. Поэтому текущую сборку нельзя описывать как целиком MIT или полностью свободную от ограничений исходной лицензии. Исходники доступны, но лицензия всего приложения смешанная. Для выпуска целиком на новой свободной лицензии потребуется заменить оставшуюся унаследованную реализацию или получить необходимые разрешения.
+Изменено Takayom1; не является официальным выпуском D-Island. Раздел 3 исходной лицензии требует видимого полного авторства и сохранения уведомлений. Поэтому текущую сборку нельзя описывать как целиком MIT или полностью свободную от ограничений исходной лицензии. Исходники доступны, но лицензия всего приложения смешанная. Для выпуска целиком на новой свободной лицензии потребуется заменить оставшуюся унаследованную реализацию или получить необходимые разрешения.
 
 ## Зависимости
 
 Собственные условия библиотек и референсов перечислены в THIRD-PARTY-NOTICES.txt. Условия Windows, Codex и сетевых сервисов остаются отдельными. Исторические документы в репозитории не меняют эту карту лицензий.
 
-Дополнительно MIT: RvcVoice.cs, Assets/Voice/rvc-convert.py, scripts/prepare-speech.py, scripts/build-installer.ps1 и packaging/HoshinoIsland.iss (пути относительно src либо корня проекта по расположению). Веса HoshinoOv2 не включены.
+Дополнительно MIT: RvcVoice.cs, Assets/Voice/rvc-convert.py, scripts/prepare-speech.py, scripts/build-installer.ps1 и packaging/HoshiBar.iss (пути относительно src либо корня проекта по расположению). Веса HoshinoOv2 не включены.
 
 Адаптер Assets/Voice/neural-tts.py — MIT; веса Silero и HoshinoOv2 не входят в эту лицензию и не распространяются с установщиком.
 
 Код installer/ (собственное окно установщика) и Assets/Voice/voice-worker.py — MIT. Векторный образ персонажа сохраняет исключения для графики, описанные выше. Inno Setup и .NET сохраняют собственные условия; они не перелицензируются этим документом. Веса нейромоделей не включены.
 
-Скрипт scripts/update-local.ps1 — MIT. Звуки Assets/Sounds/*.wav — Kenney Interface Sounds, CC0; исходный текст лицензии: Assets/Sounds/LICENSE-KENNEY.txt. faster-whisper и CTranslate2 устанавливаются отдельно под MIT; модель Whisper скачивается отдельно и сохраняет собственную лицензию.
+Скрипт scripts/update-local.ps1 — MIT. Звуки Assets/Sounds/*.wav — Kenney Interface Sounds, CC0; исходный текст лицензии: Assets/Sounds/LICENSE-KENNEY.txt. Шрифты тем Assets/Fonts/*.ttf (Pixelify Sans, Exo 2, Rounded Mplus 1c) — SIL Open Font License 1.1; текст лицензии: Assets/Fonts/OFL-FONTS.txt. faster-whisper и CTranslate2 устанавливаются отдельно под MIT; модель Whisper скачивается отдельно и сохраняет собственную лицензию.

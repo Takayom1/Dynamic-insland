@@ -7,6 +7,42 @@
     <Application.Resources>
 
         <FontFamily x:Key="IconFont">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
+        <FontFamily x:Key="HoshinoFontFamily">Segoe UI Variable Display, Segoe UI</FontFamily>
+
+        <SolidColorBrush x:Key="HoshinoBackground" Color="#18141F" />
+        <SolidColorBrush x:Key="HoshinoBackdrop" Color="#E018141F" />
+        <SolidColorBrush x:Key="HoshinoSurface" Color="#241F2E" />
+        <SolidColorBrush x:Key="HoshinoCompanionSurface" Color="#282233" />
+        <SolidColorBrush x:Key="HoshinoPlayerSurface" Color="#241F2E" />
+        <SolidColorBrush x:Key="HoshinoTasksSurface" Color="#241F2E" />
+        <SolidColorBrush x:Key="HoshinoControl" Color="#332B3F" />
+        <SolidColorBrush x:Key="HoshinoControlHover" Color="#28FFFFFF" />
+        <SolidColorBrush x:Key="HoshinoControlPressed" Color="#42FFFFFF" />
+        <SolidColorBrush x:Key="HoshinoBorder" Color="#4A3D59" />
+        <SolidColorBrush x:Key="HoshinoDivider" Color="#24FFFFFF" />
+        <SolidColorBrush x:Key="HoshinoAccent" Color="#EAB0CF" />
+        <SolidColorBrush x:Key="HoshinoSecondaryAccent" Color="#83CFF3" />
+        <SolidColorBrush x:Key="HoshinoGold" Color="#F2D17D" />
+        <SolidColorBrush x:Key="HoshinoMomoBar" Color="#EAB0CF" />
+        <SolidColorBrush x:Key="HoshinoText" Color="#F4EDF6" />
+        <SolidColorBrush x:Key="HoshinoMuted" Color="#A59CAC" />
+        <SolidColorBrush x:Key="HoshinoOnAccent" Color="#18141F" />
+        <SolidColorBrush x:Key="HoshinoTrack" Color="#33FFFFFF" />
+        <SolidColorBrush x:Key="HoshinoArtPlaceholder" Color="#2B2635" />
+        <SolidColorBrush x:Key="HoshinoCartoonInk" Color="#2A1E2E" />
+
+        <!-- Skin-adaptive button & chip geometry resources (updated live in IslandSkinEngine) -->
+        <CornerRadius x:Key="HoshinoButtonCornerRadius">14</CornerRadius>
+        <CornerRadius x:Key="HoshinoButtonInnerCornerRadius">13</CornerRadius>
+        <Thickness x:Key="HoshinoChipBorderThickness">1</Thickness>
+        <SolidColorBrush x:Key="HoshinoChipBorderBrush" Color="#2EFFFFFF" />
+        <Thickness x:Key="HoshinoChipInnerRimThickness">0</Thickness>
+        <SolidColorBrush x:Key="HoshinoChipInnerRimBrush" Color="Transparent" />
+        <Thickness x:Key="HoshinoPixelBevelTLThickness">0</Thickness>
+        <Thickness x:Key="HoshinoPixelBevelBRThickness">0</Thickness>
+        <SolidColorBrush x:Key="HoshinoPixelBevelTopLeft" Color="Transparent" />
+        <SolidColorBrush x:Key="HoshinoPixelBevelBottomRight" Color="Transparent" />
+        <Visibility x:Key="HoshinoCartoonShadowVis">Collapsed</Visibility>
 
         <Style x:Key="Glyph" TargetType="TextBlock">
             <Setter Property="FontFamily" Value="{StaticResource IconFont}" />
@@ -14,25 +50,43 @@
             <Setter Property="HorizontalAlignment" Value="Center" />
         </Style>
 
+        <!-- Skin-aware icon / tab button -->
         <Style x:Key="IconButton" TargetType="Button">
-            <Setter Property="Foreground" Value="White" />
+            <Setter Property="Foreground" Value="{DynamicResource HoshinoText}" />
             <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Focusable" Value="False" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="Padding" Value="0" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="14">
-                            <ContentPresenter Margin="{TemplateBinding Padding}"
-                                              HorizontalAlignment="Center" VerticalAlignment="Center" />
-                        </Border>
+                        <Grid SnapsToDevicePixels="True">
+                            <Border x:Name="Bd"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="{DynamicResource HoshinoButtonCornerRadius}">
+                                <Grid>
+                                    <Border x:Name="InnerRim"
+                                            CornerRadius="{DynamicResource HoshinoButtonInnerCornerRadius}"
+                                            BorderBrush="Transparent"
+                                            BorderThickness="0"
+                                            IsHitTestVisible="False" />
+                                    <ContentPresenter x:Name="Cp"
+                                                      Margin="{TemplateBinding Padding}"
+                                                      HorizontalAlignment="Center"
+                                                      VerticalAlignment="Center" />
+                                </Grid>
+                            </Border>
+                        </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#26FFFFFF" />
+                                <Setter TargetName="InnerRim" Property="Background" Value="{DynamicResource HoshinoControlHover}" />
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#40FFFFFF" />
+                                <Setter TargetName="InnerRim" Property="Background" Value="{DynamicResource HoshinoControlPressed}" />
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter Property="Opacity" Value="0.35" />
@@ -43,12 +97,85 @@
             </Setter>
         </Style>
 
-        <Style x:Key="ChipButton" TargetType="Button" BasedOn="{StaticResource IconButton}">
-            <Setter Property="Background" Value="#1FFFFFFF" />
+        <!-- Skin-aware physical / glass / sticker / pill ChipButton -->
+        <Style x:Key="ChipButton" TargetType="Button">
+            <Setter Property="FontFamily" Value="{DynamicResource HoshinoFontFamily}" />
+            <Setter Property="Foreground" Value="{DynamicResource HoshinoText}" />
+            <Setter Property="Background" Value="{DynamicResource HoshinoControl}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource HoshinoChipBorderBrush}" />
+            <Setter Property="BorderThickness" Value="{DynamicResource HoshinoChipBorderThickness}" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="Cursor" Value="Hand" />
             <Setter Property="Padding" Value="10,5" />
             <Setter Property="Margin" Value="5,0,0,0" />
             <Setter Property="FontSize" Value="12" />
             <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid SnapsToDevicePixels="True">
+                            <!-- Crisp vector hard offset shadow via RenderTransform (NEVER negative Margin -> zero LayoutClip tearing!) -->
+                            <Border x:Name="CartoonShadow"
+                                    Visibility="{DynamicResource HoshinoCartoonShadowVis}"
+                                    Background="{StaticResource HoshinoCartoonInk}"
+                                    CornerRadius="{DynamicResource HoshinoButtonCornerRadius}"
+                                    IsHitTestVisible="False">
+                                <Border.RenderTransform>
+                                    <TranslateTransform X="2.5" Y="2.5" />
+                                </Border.RenderTransform>
+                            </Border>
+
+                            <Border x:Name="Bd"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="{DynamicResource HoshinoButtonCornerRadius}"
+                                    ClipToBounds="True">
+                                <Grid>
+                                    <!-- Win7 Aero inner white glass bevel -->
+                                    <Border x:Name="AeroInner"
+                                            CornerRadius="{DynamicResource HoshinoButtonInnerCornerRadius}"
+                                            BorderBrush="{DynamicResource HoshinoChipInnerRimBrush}"
+                                            BorderThickness="{DynamicResource HoshinoChipInnerRimThickness}"
+                                            IsHitTestVisible="False" />
+                                    <!-- Pixel Tamagotchi 2px 3D raised/sunken bevels -->
+                                    <Border x:Name="PxTL"
+                                            BorderBrush="{DynamicResource HoshinoPixelBevelTopLeft}"
+                                            BorderThickness="{DynamicResource HoshinoPixelBevelTLThickness}"
+                                            IsHitTestVisible="False" />
+                                    <Border x:Name="PxBR"
+                                            BorderBrush="{DynamicResource HoshinoPixelBevelBottomRight}"
+                                            BorderThickness="{DynamicResource HoshinoPixelBevelBRThickness}"
+                                            IsHitTestVisible="False" />
+                                    <Border x:Name="HoverOverlay" Background="Transparent" IsHitTestVisible="False" />
+                                    <ContentPresenter x:Name="Cp"
+                                                      Margin="{TemplateBinding Padding}"
+                                                      HorizontalAlignment="Center"
+                                                      VerticalAlignment="Center" />
+                                </Grid>
+                            </Border>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="HoverOverlay" Property="Background" Value="{DynamicResource HoshinoControlHover}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="HoverOverlay" Property="Background" Value="{DynamicResource HoshinoControlPressed}" />
+                                <Setter TargetName="PxTL" Property="BorderBrush" Value="{DynamicResource HoshinoPixelBevelBottomRight}" />
+                                <Setter TargetName="PxBR" Property="BorderBrush" Value="{DynamicResource HoshinoPixelBevelTopLeft}" />
+                                <Setter TargetName="CartoonShadow" Property="RenderTransform">
+                                    <Setter.Value>
+                                        <TranslateTransform X="1.2" Y="1.2" />
+                                    </Setter.Value>
+                                </Setter>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.35" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
 
     </Application.Resources>

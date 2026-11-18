@@ -1,4 +1,4 @@
-// Original Hoshino Island code: Copyright (c) 2026 Takayom1
+// Original HoshiBar code: Copyright (c) 2026 Takayom1
 // SPDX-License-Identifier: MIT
 // Scope and artwork exclusions: see LICENSING.md.
 using System.IO;
@@ -27,7 +27,7 @@ public sealed class JournalPanel : Border, IDisposable
         var panel=new StackPanel();Child=panel;
         var row=new DockPanel{Margin=new Thickness(0,0,0,8)};
         var save=new Button{Content="Сохранить",Padding=new Thickness(8,4,8,4)};save.Click+=(_,_)=>Save();DockPanel.SetDock(save,Dock.Right);row.Children.Add(save);row.Children.Add(title);panel.Children.Add(row);
-        editor.Background=new SolidColorBrush(Color.FromArgb(14,255,255,255));editor.Foreground=Brushes.White;editor.CaretBrush=Brushes.White;editor.Padding=new Thickness(8);editor.BorderThickness=new Thickness(0);
+        editor.SetResourceReference(Control.BackgroundProperty,"HoshinoControl");editor.SetResourceReference(Control.ForegroundProperty,"HoshinoText");editor.SetResourceReference(System.Windows.Controls.Primitives.TextBoxBase.CaretBrushProperty,"HoshinoText");editor.Padding=new Thickness(8);editor.BorderThickness=new Thickness(0);
         editor.PreviewMouseLeftButtonDown+=(_,_)=>beginTyping(editor);
         editor.TextChanged+=(_,_)=>{if(!loading){dirty=true;status.Text="Есть несохранённые изменения";}};
         panel.Children.Add(editor);panel.Children.Add(status);

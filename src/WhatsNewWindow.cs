@@ -13,7 +13,7 @@ using DIsland.Services;
 namespace DIsland;
 
 /// <summary>
-/// What changed in each version, shown once after Hoshino Island updates (automatically or by running a
+/// What changed in each version, shown once after HoshiBar updates (automatically or by running a
 /// newer installer) and from Settings. Add an entry here for every release.
 /// </summary>
 public static class WhatsNew
@@ -24,6 +24,15 @@ public static class WhatsNew
 
     public static readonly IReadOnlyList<Release> Releases = new[]
     {
+        new Release(new Version(1, 0, 0), new[]
+        {
+            new Item("", "#FFEAB0CF", "HoshiBar 1.0",
+                "Пять самодостаточных визуальных тем, Bento-интерфейс, режим сквозного клика «Призрак» (Ctrl+Alt+G) и новый пульт системного трея."),
+            new Item("", "#FF83CFF3", "Автоустановка нейроголоса и мульти-AI",
+                "Обновлённый локальный нейроголос Хошино устанавливается автоматически, а в AI-чате доступны Codex, Gemini и Claude."),
+            new Item("", "#FFF2D17D", "Полка ⇄ Телефон по Wi-Fi QR",
+                "Мгновенный локальный обмен файлами со смартфоном по домашней сети Wi-Fi без облаков и регистрации."),
+        }),
         new Release(new Version(0, 17, 0), new[]
         {
             new Item("", "#FFF0B6D3", "Команды через Whisper",
@@ -32,8 +41,8 @@ public static class WhatsNew
                 "Отдельная громкость Хошино, тихие сигналы и подписи: слушаю, думаю, выполняю команду, отвечаю."),
             new Item("", "#FF30D158", "Остров остаётся на своём экране",
                 "Выбери монитор в настройках. Обычное развёрнутое окно и полноэкранное приложение на другом мониторе больше не включают игровой режим."),
-            new Item("", "#FFBF5AF2", "Hoshino Island",
-                "Новое имя исполняемого файла — HoshinoIsland.exe. Аккаунт, история, задачи и калибровка сохраняются при обновлении."),
+            new Item("", "#FFBF5AF2", "HoshiBar",
+                "Новое имя проекта и исполняемого файла — HoshiBar.exe. Аккаунт, история, задачи и калибровка сохраняются при обновлении."),
         }),
     };
 
@@ -51,7 +60,7 @@ public sealed class WhatsNewWindow : Window
 
     public WhatsNewWindow(IReadOnlyList<WhatsNew.Release> releases, Version? updatedFrom)
     {
-        Title = "What's new in Hoshino Island";
+        Title = "Что нового в HoshiBar";
         Width = 440;
         SizeToContent = SizeToContent.Height;
         WindowStyle = WindowStyle.None;
@@ -80,14 +89,14 @@ public sealed class WhatsNewWindow : Window
         var current = UpdateService.CurrentVersion;
         content.Children.Add(new TextBlock
         {
-            Text = updatedFrom is null ? "What's new in Hoshino Island" : "Hoshino Island is up to date",
+            Text = updatedFrom is null ? "Что нового в HoshiBar" : "HoshiBar обновлён",
             FontSize = 22,
             FontWeight = FontWeights.SemiBold,
             Margin = new Thickness(0, 16, 0, 0),
         });
         content.Children.Add(new TextBlock
         {
-            Text = updatedFrom is null ? $"Version {current}" : $"Updated from {updatedFrom} to {current}. Here's what's new:",
+            Text = updatedFrom is null ? $"Версия {current}" : $"Обновлено с {updatedFrom} до {current}:",
             Foreground = Secondary,
             Margin = new Thickness(0, 4, 0, 8),
         });

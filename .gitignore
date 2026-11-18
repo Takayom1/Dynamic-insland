@@ -22,6 +22,7 @@ src/DIsland.ico
 **/history.txt
 **/vault-backups/
 **/journal-drafts/
+**/system-prompts/
 *.pfx
 *.p12
 *.key
@@ -36,3 +37,5 @@ src/Assets/Speech/
 **/voice-status.json
 installer/bin/
 installer/obj/
+.obsidian/
+DESIGN-DOC.md

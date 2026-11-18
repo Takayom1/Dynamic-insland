@@ -1,4 +1,4 @@
-// Original Hoshino Island code: Copyright (c) 2026 Takayom1
+// Original HoshiBar code: Copyright (c) 2026 Takayom1
 // SPDX-License-Identifier: MIT
 // Scope and artwork exclusions: see LICENSING.md.
 using System.Text.Json.Nodes;
@@ -9,11 +9,16 @@ namespace DIsland;
 public sealed class AssistantSettingsPanel : StackPanel
 {
     private readonly TextBlock account = new() { Text = "Аккаунт не проверен", TextWrapping = TextWrapping.Wrap };
-    private readonly TextBlock feedback = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 12, 0, 0), Foreground = Brushes.LightSkyBlue };
+    private readonly TextBlock feedback = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 12, 0, 0) };
+    private readonly ComboBox provider = new() { MinHeight = 32, DisplayMemberPath = "Label", SelectedValuePath = "Id" };
     private readonly ComboBox model = new() { MinHeight = 32, DisplayMemberPath = "Label", SelectedValuePath = "Id" };
     private readonly ComboBox access = new() { MinHeight = 32, DisplayMemberPath = "Label", SelectedValuePath = "Id" };
     private readonly ComboBox culture = new() { MinHeight = 32, IsEditable = true };
-    private readonly TextBox work = new(), vault = new(), executable = new(), instructions = new();
+    private readonly TextBox work = new(), vault = new(), codexExe = new(), geminiExe = new(), claudeExe = new(), instructions = new();
+    private readonly Dictionary<string, string> stagedModels = new(StringComparer.OrdinalIgnoreCase);
+    private string currentProviderId = AssistantProviders.Codex;
+    private Button? loginButton;
+    private TextBlock? privacyText;
     private readonly CheckBox neural=new(){Content="Нейросетевая русская речь вместо голоса Windows"};
     private readonly TextBox neuralModel=new();
     private readonly ComboBox neuralSpeaker=new();
@@ -22,26 +27,71 @@ public sealed class AssistantSettingsPanel : StackPanel
     private readonly CheckBox wake=new(){Content="Ждать выбранную фразу — микрофон включён постоянно"};
     private readonly ComboBox voices=new(){MinHeight=32};
     private readonly Slider rate=new(){Minimum=-5,Maximum=5,TickFrequency=1,IsSnapToTickEnabled=true};
-    private readonly CheckBox speech = new() { Content = "Озвучивать готовый ответ голосом Windows", Foreground = Brushes.White };
+    private readonly CheckBox speech = new() { Content = "Озвучивать готовый ответ голосом Windows" };
     public record Choice(string Id, string Label) { public override string ToString() => Label; }
     public AssistantSettingsPanel()
     {
         AssistantTheme.Apply(this);
+        feedback.SetResourceReference(TextBlock.ForegroundProperty, "HoshinoAccent");
+        speech.SetResourceReference(Control.ForegroundProperty, "HoshinoText");
+
         var prefs = AssistantPreferences.Current;
-        Label("Аккаунт и модель"); Children.Add(account);
-        var actions = new WrapPanel { Margin = new Thickness(0, 8, 0, 12) }; Children.Add(actions);
-        Button(actions, "Войти через ChatGPT", async () => { await AssistantAccount.Login(); feedback.Text = "Завершите вход в браузере, затем нажмите «Обновить»"; });
+        currentProviderId = AssistantProviders.Normalize(prefs.Provider);
+        stagedModels[AssistantProviders.Codex] = prefs.Model;
+        stagedModels[AssistantProviders.Gemini] = prefs.GeminiModel;
+        stagedModels[AssistantProviders.Claude] = prefs.ClaudeModel;
+
+        Label("Провайдер AI, аккаунт и модель");
+        Text("Выберите официальный CLI-движок помощника (все три работают с голосом Хошино, фразой «Хей Хошино» и памятью Obsidian):");
+        provider.ItemsSource = AssistantProviders.All;
+        provider.SelectedValue = currentProviderId;
+        Children.Add(provider);
+
+        account.Margin = new Thickness(0, 10, 0, 0);
+        Children.Add(account);
+
+        var actions = new WrapPanel { Margin = new Thickness(0, 8, 0, 12) };
+        Children.Add(actions);
+        loginButton = CreateActionButton(actions, GetLoginButtonTitle(currentProviderId), async () =>
+        {
+            SaveSelectedProviderImmediate();
+            feedback.Text = await AssistantRuntime.Router.Get(currentProviderId).LoginAsync();
+        });
         Button(actions, "Обновить", Refresh);
-        Button(actions, "Выйти / сменить аккаунт", async () => { await AssistantAccount.Logout(); account.Text = "Аккаунт отключён. Теперь можно войти в другой."; model.ItemsSource = null; });
-        Text("Модель — после входа нажмите «Обновить», затем сохраните выбор."); Children.Add(model);
-        Text("Друг подключает собственный ChatGPT. В архив приложения не входят ваш вход, диалоги и личные настройки. Список моделей загружается из его аккаунта; сторонние API-провайдеры в этом интерфейсе пока не поддерживаются.");
-        Text("Запросы и прочитанное помощником содержимое файлов могут передаваться OpenAI. История сохраняется на этом компьютере обычным текстом, без шифрования. Не давайте помощнику доступ к файлам, которые не хотите передавать модели.");
+        Button(actions, "Выйти / сменить аккаунт", async () =>
+        {
+            SaveSelectedProviderImmediate();
+            await AssistantRuntime.Router.Get(currentProviderId).LogoutAsync();
+            account.Text = "Аккаунт отключён. Теперь можно выполнить новый вход.";
+            if (currentProviderId == AssistantProviders.Codex) model.ItemsSource = null;
+        });
+
+        Text("Модель — нажмите «Обновить» для загрузки списка или выберите пресет (для Gemini и Claude можно также вписать ID модели вручную).");
+        Children.Add(model);
+
+        privacyText = new TextBlock { FontSize = 12, Opacity = .65, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 8) };
+        Children.Add(privacyText);
+
+        ApplyProviderUiState(currentProviderId);
+        provider.SelectionChanged += async (_, _) =>
+        {
+            CaptureCurrentModelSelection();
+            currentProviderId = AssistantProviders.Normalize(provider.SelectedValue?.ToString());
+            ApplyProviderUiState(currentProviderId);
+            try
+            {
+                SaveSelectedProviderImmediate();
+                account.Text = await AssistantRuntime.Router.Get(currentProviderId).RefreshAccountAsync();
+            }
+            catch (Exception e) { account.Text = e.Message; }
+        };
+
         Label("Файлы и доступ к компьютеру");
-        access.ItemsSource = new[] { new Choice("read-only", "Только чтение и диагностика"), new Choice("workspace-write", "Работа с файлами в выбранной папке"), new Choice("danger-full-access", "Весь ПК: права текущего пользователя") }; access.SelectedValue = prefs.AccessMode; Children.Add(access);
-        Text("Команды, не признанные доверенными, и запросы расширения прав показываются для подтверждения. Полный доступ не даёт права администратора и ослабляет изоляцию; не каждое изменение автоматически вызывает запрос. Перед опасными действиями помощнику предписано запросить согласие.");
+        access.ItemsSource = new[] { new Choice("read-only", "Только чтение и план"), new Choice("workspace-write", "Работа с файлами в выбранной папке"), new Choice("danger-full-access", "Весь ПК: права текущего пользователя") }; access.SelectedValue = prefs.AccessMode; Children.Add(access);
+        Text("Режим доступа передаётся выбранному CLI (Codex sandbox / Gemini --approval-mode / Claude --permission-mode). Полный доступ не даёт права администратора и ослабляет изоляцию; перед опасными действиями помощнику предписано запросить согласие.");
         Folder("Рабочая папка", work, prefs.WorkingDirectory);
         vault.Text=prefs.Vault;
-        Text("Синхронизация Obsidian, память и ежедневник настраиваются в отдельном разделе Obsidian основного окна настроек. Подключённый там vault становится рабочей папкой Codex.");
+        Text("Синхронизация Obsidian, память и ежедневник настраиваются в отдельном разделе Obsidian основного окна настроек. Подключённый там vault становится рабочей папкой помощника.");
         Label("Голос"); culture.Text = prefs.RecognitionCulture; Children.Add(culture); RefreshCultures(); culture.Text = prefs.RecognitionCulture;
         Text("Распознавание речи");
         var recognition=new ComboBox{ItemsSource=new[]{new Choice("whisper","Whisper · точнее, локально"),new Choice("vosk","Vosk · лёгкий, локально"),new Choice("windows","Windows · установленный распознаватель")},DisplayMemberPath="Label",SelectedValuePath="Id",SelectedValue=prefs.RecognitionEngine};Children.Add(recognition);
@@ -56,6 +106,50 @@ public sealed class AssistantSettingsPanel : StackPanel
         void VolumeLabel()=>volumeLabel.Text=$"Громкость Хошино · {voiceVolume.Value:0}%";
         VolumeLabel();voiceVolume.ValueChanged+=(_,_)=>{VolumeLabel();volumeSave.Stop();volumeSave.Start();};volumeSave.Tick+=(_,_)=>{volumeSave.Stop();SaveVolume();};Unloaded+=(_,_)=>{volumeSave.Stop();SaveVolume();};
         Text("Меняет только голос Хошино. Для нейроголоса новая громкость применяется со следующей реплики.");
+
+        var packCard=new Border{CornerRadius=new CornerRadius(12),Padding=new Thickness(14,12,14,12),Margin=new Thickness(0,8,0,10),BorderThickness=new Thickness(1),Background=new SolidColorBrush(Color.FromArgb(40,234,176,207)),BorderBrush=new SolidColorBrush(Color.FromArgb(95,234,176,207))};
+        var packStack=new StackPanel();packCard.Child=packStack;
+        packStack.Children.Add(new TextBlock{Text="Нейроголос Таканаши Хошино · Офлайн RU (Silero xenia + HoshinoOv2)",FontSize=13.5,FontWeight=FontWeights.SemiBold});
+        var packStatus=new TextBlock{TextWrapping=TextWrapping.Wrap,FontSize=12,Opacity=.85,Margin=new Thickness(0,4,0,8)};
+        packStack.Children.Add(packStatus);
+        var packBar=new ProgressBar{Height=6,Minimum=0,Maximum=100,Margin=new Thickness(0,0,0,8),Visibility=HoshinoVoicePack.IsInstalling?Visibility.Visible:Visibility.Collapsed,Value=HoshinoVoicePack.LastProgress};
+        packStack.Children.Add(packBar);
+        var cudaToggle=new CheckBox{Content="Ускорение на видеокарте NVIDIA (CUDA · скачивает ~2.3 ГБ вместо ~360 МБ)",Margin=new Thickness(0,0,0,8)};
+        packStack.Children.Add(cudaToggle);
+        var packButtons=new WrapPanel();packStack.Children.Add(packButtons);
+        void RefreshPackUi()
+        {
+            if(HoshinoVoicePack.IsInstalling){packBar.Visibility=Visibility.Visible;packBar.Value=HoshinoVoicePack.LastProgress;packStatus.Text=string.IsNullOrEmpty(HoshinoVoicePack.LastStatus)?"Установка пакета голоса…":HoshinoVoicePack.LastStatus;return;}
+            packBar.Visibility=Visibility.Collapsed;
+            var installed=HoshinoVoicePack.IsInstalled(out _,out _);
+            var active=AssistantPreferences.Current.NeuralEnabled&&AssistantPreferences.Current.RvcEnabled;
+            packStatus.Text=installed?(active?"Пакет установлен и активен · работает полностью локально без интернета.":"Пакет уже скачан на ПК · нажмите кнопку ниже, чтобы активировать его в 1 клик."):"Скачивает изолированный Python 3.11, Applio, Silero v5_5_ru и тембр HoshinoOv2 в папку данных пользователя (не требует ручной настройки Python и не стирается при обновлениях).";
+        }
+        RefreshPackUi();
+        Action<string,double> onPackProgress=(msg,pct)=>Dispatcher.InvokeAsync(()=>{packBar.Visibility=HoshinoVoicePack.IsInstalling?Visibility.Visible:Visibility.Collapsed;packBar.Value=pct;packStatus.Text=$"{msg} ({pct:0}%)";});
+        HoshinoVoicePack.ProgressChanged+=onPackProgress;
+        Unloaded+=(_,_)=>HoshinoVoicePack.ProgressChanged-=onPackProgress;
+        Button(packButtons,HoshinoVoicePack.IsInstalled(out _,out _)?"Подключить / Проверить пакет Хошино":"Установить голос Хошино в 1 клик",async()=>{
+            if(HoshinoVoicePack.IsInstalled(out var existingPth,out var existingIdx)&&cudaToggle.IsChecked!=true)
+            {
+                var cur=AssistantPreferences.Current;HoshinoVoicePack.ApplyPresetTo(cur,existingPth,existingIdx,enableSpeech:true);cur.Save();
+            }
+            else
+            {
+                await HoshinoVoicePack.InstallAsync(cudaToggle.IsChecked==true,CancellationToken.None);
+            }
+            var updated=AssistantPreferences.Current;
+            speech.IsChecked=updated.SpeakReplies;neural.IsChecked=updated.NeuralEnabled;neuralModel.Text=updated.NeuralModel;neuralSpeaker.SelectedItem=updated.NeuralSpeaker;
+            rvc.IsChecked=updated.RvcEnabled;rvcPython.Text=updated.RvcPython;rvcEngine.Text=updated.RvcEngine;rvcModel.Text=updated.RvcModel;rvcIndex.Text=updated.RvcIndex;
+            AssistantRuntime.Voice?.Configure();RefreshPackUi();feedback.Text="Голос Таканаши Хошино готов к работе.";
+        });
+        Button(packButtons,"Прослушать голос Хошино",async()=>{
+            if(AssistantRuntime.Busy)throw new InvalidOperationException("Дождитесь ответа Codex");
+            var cur=AssistantPreferences.Current;
+            if(!cur.SpeakReplies){cur.SpeakReplies=true;speech.IsChecked=true;cur.Save(false);}
+            if(AssistantRuntime.Voice is { } voice)await voice.Preview("Привет. Не спеши так, давай спокойно разберём твои дела по порядку.");
+        });
+        Children.Add(packCard);
         var cues=new CheckBox{Content="Свои звуки: слушаю, работаю, ответ готов",IsChecked=prefs.AssistantSounds};Children.Add(cues);
         var cueVolume=new Slider{Minimum=0,Maximum=40,TickFrequency=1,IsSnapToTickEnabled=true,Value=prefs.AssistantSoundVolume*100};Children.Add(cueVolume);
         void SaveCues(){try{var p=AssistantPreferences.Current;p.AssistantSounds=cues.IsChecked==true;p.AssistantSoundVolume=cueVolume.Value/100;p.Save(false);}catch(Exception e){feedback.Text=e.Message;}}
@@ -92,31 +186,171 @@ public sealed class AssistantSettingsPanel : StackPanel
         Text("Модель .pth · полный путь");rvcModel.Text=prefs.RvcModel;Children.Add(rvcModel);
         Text("Индекс .index · полный путь");rvcIndex.Text=prefs.RvcIndex;Children.Add(rvcIndex);
         var neuralPreview=new WrapPanel();Children.Add(neuralPreview);
-        Button(neuralPreview,"Проба сохранённого нейроголоса",async()=>{if(AssistantRuntime.Busy)throw new InvalidOperationException("Дождитесь ответа Codex");if(!AssistantPreferences.Current.SpeakReplies)throw new InvalidOperationException("Включите озвучку и сохраните настройки");if(AssistantRuntime.Voice is { } voice)await voice.Preview("Я здесь. Слушаю тебя.");});
+        Button(neuralPreview,"Проба сохранённого нейроголоса",async()=>{if(AssistantRuntime.Busy)throw new InvalidOperationException("Дождитесь завершения ответа помощника");if(!AssistantPreferences.Current.SpeakReplies)throw new InvalidOperationException("Включите озвучку и сохраните настройки");if(AssistantRuntime.Voice is { } voice)await voice.Preview("Я здесь. Слушаю тебя.");});
         Button(neuralPreview,"Остановить голос",()=>{AssistantRuntime.Voice?.Silence();return Task.CompletedTask;});
-        var neuralState=new TextBlock{Text=liveVoice?.CurrentStatus??"Голос не запущен",TextWrapping=TextWrapping.Wrap,Foreground=Brushes.LightSkyBlue};Children.Add(neuralState);
+        var neuralState=new TextBlock{Text=liveVoice?.CurrentStatus??"Голос не запущен",TextWrapping=TextWrapping.Wrap};neuralState.SetResourceReference(TextBlock.ForegroundProperty,"HoshinoAccent");Children.Add(neuralState);
         Action<string> neuralStatus=text=>neuralState.Text=text;if(liveVoice!=null){liveVoice.Status+=neuralStatus;Unloaded+=(_,_)=>liveVoice.Status-=neuralStatus;}
         Text("После включения озвучки модели прогреваются один раз и остаются в памяти до отключения озвучки или закрытия острова. Повторные реплики используют тот же процесс. Совместимый Python с CUDA включает GPU для RVC автоматически.");
         Label("Поведение помощника"); instructions.Text = prefs.Instructions; instructions.AcceptsReturn = true; instructions.TextWrapping = TextWrapping.Wrap; instructions.Height = 190; instructions.VerticalScrollBarVisibility = ScrollBarVisibility.Auto; Children.Add(instructions);
-        Label("Codex CLI"); executable.Text = prefs.CodexExecutable; Children.Add(executable); Text("Оставьте пустым для автоматического поиска. Либо полный путь к официальному codex.exe. На компьютере друга CLI устанавливается отдельно.");
+
+        Label("Пути к CLI-нейросетям (необязательно)");
+        Text("Оставьте поля пустыми для автоматического поиска в PATH и глобальных папках npm / .local/bin, либо укажите точный путь к исполняемому файлу:");
+        ExeFileRow("Codex CLI (@openai/codex · codex.exe)", codexExe, prefs.CodexExecutable);
+        ExeFileRow("Gemini CLI (@google/gemini-cli · gemini.cmd / gemini.exe)", geminiExe, prefs.GeminiExecutable);
+        ExeFileRow("Claude Code CLI (@anthropic-ai/claude-code · claude.exe / claude.cmd)", claudeExe, prefs.ClaudeExecutable);
+
         var save = new WrapPanel { Margin = new Thickness(0, 16, 0, 0) }; Children.Add(save);
         Button(save, "Сохранить настройки", () =>
         {
             if (AssistantRuntime.Busy) throw new InvalidOperationException("Сначала остановите ответ");
-            var settings = new AssistantPreferences { Model = model.SelectedValue?.ToString() ?? prefs.Model, AccessMode = access.SelectedValue?.ToString() ?? "workspace-write", WorkingDirectory = work.Text.Trim(), Vault = vault.Text.Trim(), CodexExecutable = executable.Text.Trim(), RecognitionCulture = culture.Text.Trim(), RecognitionEngine=recognition.SelectedValue?.ToString()??"vosk",WhisperModel=whisperFolder.Text.Trim(),SpeechPauseSeconds=speechPause.Value,VoiceVolume=voiceVolume.Value/100,AssistantSounds=AssistantPreferences.Current.AssistantSounds,AssistantSoundVolume=AssistantPreferences.Current.AssistantSoundVolume, SpeakReplies = speech.IsChecked == true, WakeEnabled=wake.IsChecked==true,WakePhrase=AssistantPreferences.Current.WakePhrase,MicrophoneDevice=AssistantPreferences.Current.MicrophoneDevice, VoiceName=voices.SelectedItem?.ToString()??"",VoiceRate=(int)rate.Value, NeuralEnabled=neural.IsChecked==true,NeuralModel=neuralModel.Text.Trim(),NeuralSpeaker=neuralSpeaker.SelectedItem?.ToString()??"baya",RvcEnabled=rvc.IsChecked==true,RvcPython=rvcPython.Text.Trim(),RvcEngine=rvcEngine.Text.Trim(),RvcModel=rvcModel.Text.Trim(),RvcIndex=rvcIndex.Text.Trim(), Instructions = instructions.Text };
-            settings.Save(); AssistantRuntime.Bridge.Restart(); feedback.Text = "Сохранено. Следующее сообщение начнёт новый диалог с этими параметрами."; return Task.CompletedTask;
+            CaptureCurrentModelSelection();
+            var cur = AssistantPreferences.Current;
+            var settings = new AssistantPreferences
+            {
+                Provider = AssistantProviders.Normalize(provider.SelectedValue?.ToString() ?? currentProviderId),
+                Model = stagedModels.GetValueOrDefault(AssistantProviders.Codex, cur.Model),
+                GeminiModel = stagedModels.GetValueOrDefault(AssistantProviders.Gemini, cur.GeminiModel),
+                ClaudeModel = stagedModels.GetValueOrDefault(AssistantProviders.Claude, cur.ClaudeModel),
+                AccessMode = access.SelectedValue?.ToString() ?? "workspace-write",
+                WorkingDirectory = work.Text.Trim(),
+                Vault = vault.Text.Trim(),
+                CodexExecutable = codexExe.Text.Trim(),
+                GeminiExecutable = geminiExe.Text.Trim(),
+                ClaudeExecutable = claudeExe.Text.Trim(),
+                RecognitionCulture = culture.Text.Trim(),
+                RecognitionEngine = recognition.SelectedValue?.ToString() ?? "vosk",
+                WhisperModel = whisperFolder.Text.Trim(),
+                SpeechPauseSeconds = speechPause.Value,
+                VoiceVolume = voiceVolume.Value / 100,
+                AssistantSounds = cur.AssistantSounds,
+                AssistantSoundVolume = cur.AssistantSoundVolume,
+                SpeakReplies = speech.IsChecked == true,
+                WakeEnabled = wake.IsChecked == true,
+                WakePhrase = cur.WakePhrase,
+                MicrophoneDevice = cur.MicrophoneDevice,
+                VoiceName = voices.SelectedItem?.ToString() ?? "",
+                VoiceRate = (int)rate.Value,
+                NeuralEnabled = neural.IsChecked == true,
+                NeuralModel = neuralModel.Text.Trim(),
+                NeuralSpeaker = neuralSpeaker.SelectedItem?.ToString() ?? "xenia",
+                RvcEnabled = rvc.IsChecked == true,
+                RvcPython = rvcPython.Text.Trim(),
+                RvcEngine = rvcEngine.Text.Trim(),
+                RvcModel = rvcModel.Text.Trim(),
+                RvcIndex = rvcIndex.Text.Trim(),
+                RvcPitch = cur.RvcPitch,
+                RvcIndexRate = cur.RvcIndexRate,
+                RvcProtect = cur.RvcProtect,
+                Instructions = instructions.Text,
+            };
+            settings.Save();
+            AssistantRuntime.Router.RestartAll();
+            feedback.Text = $"Сохранено ({AssistantProviders.DisplayName(settings.Provider)}). Следующее сообщение начнёт новый диалог.";
+            return Task.CompletedTask;
         });
         Children.Add(feedback);
     }
+
+    private static string GetLoginButtonTitle(string providerId) => AssistantProviders.Normalize(providerId) switch
+    {
+        AssistantProviders.Gemini => "Войти в Gemini CLI",
+        AssistantProviders.Claude => "Войти в Claude Code",
+        _ => "Войти через ChatGPT",
+    };
+
+    private void SaveSelectedProviderImmediate()
+    {
+        if (AssistantRuntime.Busy) return;
+        var cur = AssistantPreferences.Current;
+        cur.Provider = currentProviderId;
+        cur.CodexExecutable = codexExe.Text.Trim();
+        cur.GeminiExecutable = geminiExe.Text.Trim();
+        cur.ClaudeExecutable = claudeExe.Text.Trim();
+        cur.Save(false);
+    }
+
+    private void CaptureCurrentModelSelection()
+    {
+        if (currentProviderId == AssistantProviders.Codex)
+        {
+            if (model.SelectedValue is string sel) stagedModels[AssistantProviders.Codex] = sel;
+        }
+        else
+        {
+            if (model.SelectedItem is Choice ch)
+                stagedModels[currentProviderId] = ch.Id;
+            else
+                stagedModels[currentProviderId] = (model.Text ?? "").Trim();
+        }
+    }
+
+    private void ApplyProviderUiState(string providerId)
+    {
+        var norm = AssistantProviders.Normalize(providerId);
+        if (loginButton != null) loginButton.Content = GetLoginButtonTitle(norm);
+
+        var vendor = AssistantProviders.VendorName(norm);
+        if (privacyText != null)
+        {
+            privacyText.Text = $"Пользователь подключает собственный локальный CLI и свой аккаунт {vendor}. Запросы, память и прочитанное помощником содержимое файлов могут передаваться {vendor}. Локальная история сохраняется в %LOCALAPPDATA%\\GlassChat.";
+        }
+
+        var savedModel = stagedModels.GetValueOrDefault(norm, "");
+        if (norm == AssistantProviders.Gemini)
+        {
+            model.IsEditable = true;
+            model.ItemsSource = GeminiCliBackend.DefaultModelChoices;
+            SelectOrDisplayModel(GeminiCliBackend.DefaultModelChoices, savedModel);
+        }
+        else if (norm == AssistantProviders.Claude)
+        {
+            model.IsEditable = true;
+            model.ItemsSource = ClaudeCliBackend.DefaultModelChoices;
+            SelectOrDisplayModel(ClaudeCliBackend.DefaultModelChoices, savedModel);
+        }
+        else
+        {
+            model.IsEditable = false;
+            model.ItemsSource = string.IsNullOrWhiteSpace(savedModel) ? null : new[] { new Choice(savedModel, savedModel) };
+            model.SelectedValue = savedModel;
+        }
+    }
+
+    private void SelectOrDisplayModel(IReadOnlyList<Choice> presets, string savedId)
+    {
+        var match = presets.FirstOrDefault(c => string.Equals(c.Id, savedId, StringComparison.OrdinalIgnoreCase));
+        if (match != null)
+        {
+            model.SelectedItem = match;
+        }
+        else
+        {
+            model.SelectedIndex = -1;
+            model.Text = savedId;
+        }
+    }
+
     private void RefreshCultures() { try { var text = culture.Text; culture.ItemsSource = AssistantVoice.Cultures(); culture.Text = text; } catch (Exception e) { feedback.Text = e.Message; } }
     private async Task Refresh()
     {
-        account.Text = await AssistantAccount.Refresh();
-        if (AssistantRuntime.AccountKey.Length == 0) return;
-        var result = await AssistantRuntime.Bridge.Call("model/list", new { }); var list = new List<Choice>();
-        if (result["data"] is JsonArray data) foreach (var item in data) { var id = item?["id"]?.ToString(); if (id != null) list.Add(new(id, item?["displayName"]?.ToString() ?? id)); }
-        model.ItemsSource = list; model.SelectedValue = AssistantPreferences.Current.Model; if (model.SelectedIndex < 0 && list.Count > 0) model.SelectedIndex = 0;
-        feedback.Text = "Аккаунт и доступные модели обновлены";
+        SaveSelectedProviderImmediate();
+        var backend = AssistantRuntime.Router.Get(currentProviderId);
+        account.Text = await backend.RefreshAccountAsync();
+        if (AssistantRuntime.AccountKey.Length == 0 && currentProviderId == AssistantProviders.Codex) return;
+
+        var list = await backend.ListModelsAsync();
+        model.ItemsSource = list;
+        var targetModel = stagedModels.GetValueOrDefault(currentProviderId, AssistantPreferences.Current.GetModelFor(currentProviderId));
+        if (currentProviderId == AssistantProviders.Codex)
+        {
+            model.SelectedValue = targetModel;
+            if (model.SelectedIndex < 0 && list.Count > 0) model.SelectedIndex = 0;
+        }
+        else
+        {
+            SelectOrDisplayModel(list, targetModel);
+        }
+        feedback.Text = $"Статус {AssistantProviders.ShortName(currentProviderId)} и список моделей обновлены";
     }
     private void Label(string text) => Children.Add(new TextBlock { Text = text, FontSize = 17, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 18, 0, 10) });
     private void Text(string text) => Children.Add(new TextBlock { Text = text, FontSize = 12, Opacity = .65, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 8) });
@@ -125,14 +359,40 @@ public sealed class AssistantSettingsPanel : StackPanel
         Text(title); var row = new DockPanel(); var choose = new Button { Content = "Выбрать…", Padding = new Thickness(12, 5, 12, 5), Margin = new Thickness(8, 0, 0, 0) }; DockPanel.SetDock(choose, Dock.Right); row.Children.Add(choose); box.Text = value; row.Children.Add(box); Children.Add(row);
         choose.Click += (_, _) => { var dialog = new Microsoft.Win32.OpenFolderDialog(); if (dialog.ShowDialog() == true) box.Text = dialog.FolderName; };
     }
-    private void Button(Panel parent, string title, Func<Task> action)
+    private void ExeFileRow(string title, TextBox box, string value)
     {
-        var button = new Button { Content = title, Padding = new Thickness(12, 7, 12, 7), Margin = new Thickness(0, 0, 8, 6) }; parent.Children.Add(button);
-        button.Click += async (_, _) => { button.IsEnabled = false; try { await action(); } catch (Exception e) { feedback.Text = e.Message; } finally { button.IsEnabled = true; } };
+        Text(title);
+        var row = new DockPanel();
+        var choose = new Button { Content = "Обзор…", Padding = new Thickness(12, 5, 12, 5), Margin = new Thickness(8, 0, 0, 0) };
+        DockPanel.SetDock(choose, Dock.Right);
+        row.Children.Add(choose);
+        box.Text = value;
+        row.Children.Add(box);
+        Children.Add(row);
+        choose.Click += (_, _) =>
+        {
+            var dialog = new Microsoft.Win32.OpenFileDialog
+            {
+                Filter = "CLI Исполняемые файлы (*.exe;*.cmd;*.bat)|*.exe;*.cmd;*.bat|Все файлы (*.*)|*.*",
+            };
+            if (dialog.ShowDialog() == true) box.Text = dialog.FileName;
+        };
     }
+    private Button CreateActionButton(Panel parent, string title, Func<Task> action)
+    {
+        var button = new Button { Content = title, Padding = new Thickness(12, 7, 12, 7), Margin = new Thickness(0, 0, 8, 6) };
+        parent.Children.Add(button);
+        button.Click += async (_, _) => { button.IsEnabled = false; try { await action(); } catch (Exception e) { feedback.Text = e.Message; } finally { button.IsEnabled = true; } };
+        return button;
+    }
+    private void Button(Panel parent, string title, Func<Task> action) => CreateActionButton(parent, title, action);
     public static void Open()
     {
-        var window = new Window { Title = "Помощник — аккаунт, файлы и голос", Width = 740, Height = 760, MinWidth = 520, MinHeight = 400, Background = new SolidColorBrush(Color.FromRgb(22, 25, 34)), Foreground = Brushes.White, WindowStartupLocation = WindowStartupLocation.CenterScreen };
-        window.Content = new ScrollViewer { Content = new AssistantSettingsPanel { Margin = new Thickness(26, 4, 26, 26) }, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }; window.Show();
+        var window = new Window { Title = "Помощник — CLI-нейросети, файлы и голос", Width = 740, Height = 780, MinWidth = 520, MinHeight = 400, WindowStartupLocation = WindowStartupLocation.CenterScreen };
+        window.SetResourceReference(Control.BackgroundProperty, "HoshinoBackground");
+        window.SetResourceReference(Control.ForegroundProperty, "HoshinoText");
+        AssistantTheme.Apply(window);
+        window.Content = new ScrollViewer { Content = new AssistantSettingsPanel { Margin = new Thickness(26, 4, 26, 26) }, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        window.Show();
     }
 }

@@ -1,108 +1,781 @@
-// Copyright 2026 Takayom1. SPDX-License-Identifier: MIT
+// Original HoshiBar code: Copyright (c) 2026 Takayom1
+// SPDX-License-Identifier: MIT
+// Scope and artwork exclusions: see LICENSING.md.
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Security.Cryptography;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Media.Animation;
+using Ellipse = System.Windows.Shapes.Ellipse;
 using Microsoft.Win32;
 
-namespace HoshinoInstaller;
+namespace HoshiBarInstaller;
+
 public static class Program
 {
-    [STAThread] public static void Main()=>new Application{ShutdownMode=ShutdownMode.OnMainWindowClose}.Run(new InstallerWindow());
+    [STAThread]
+    public static void Main() =>
+        new Application { ShutdownMode = ShutdownMode.OnMainWindowClose }.Run(new InstallerWindow());
 }
-public sealed class InstallerWindow:Window
+
+public sealed class InstallerWindow : Window
 {
-    private static readonly Brush Pink=new SolidColorBrush(Color.FromRgb(234,176,207));
-    private static readonly Brush Muted=new SolidColorBrush(Color.FromRgb(183,173,190));
-    private readonly TextBox folder=new(){Height=36,VerticalContentAlignment=VerticalAlignment.Center,Padding=new Thickness(10,0,10,0)};
-    private readonly CheckBox agree=new(){Content="Я принимаю условия лицензий",Margin=new Thickness(0,14,0,0),VerticalContentAlignment=VerticalAlignment.Center};
-    private readonly Button install=new(){Content="Поселить Хошино",Height=42,MinWidth=170,Background=Pink,Foreground=new SolidColorBrush(Color.FromRgb(42,28,44))};
-    private readonly TextBlock title=new(){Text="Она уже почти рядом",FontSize=26,FontWeight=FontWeights.SemiBold,Margin=new Thickness(0,0,0,12)};
-    private readonly TextBlock description=new(){Text="Музыка, дела и немного спокойствия.\nТвой остров всегда будет под рукой.",Foreground=Muted,TextWrapping=TextWrapping.Wrap,LineHeight=21,Margin=new Thickness(0,0,0,18)};
-    private readonly TextBlock status=new(){TextWrapping=TextWrapping.Wrap,Foreground=Muted,Margin=new Thickness(0,10,0,0),LineHeight=20};
-    private readonly StackPanel options=new();
-    private readonly ProgressBar progress=new(){Height=7,Foreground=Pink,Margin=new Thickness(0,16,0,0),Visibility=Visibility.Collapsed};
-    private readonly TextBlock version=new(){Foreground=Muted,FontSize=11};
-    private bool installing,complete;
-    public static string Version=>Assembly.GetExecutingAssembly().GetName().Version!.ToString(3);
+    private static readonly Brush PinkBrush = InstallerVisuals.Frozen(InstallerVisuals.Pink);
+    private static readonly Brush MutedBrush = InstallerVisuals.Frozen(InstallerVisuals.MutedCol);
+    private static readonly Brush TextBrush = InstallerVisuals.Frozen(InstallerVisuals.TextCol);
+
+    private readonly TextBox folder = new()
+    {
+        Height = 36,
+        VerticalContentAlignment = VerticalAlignment.Center,
+        Padding = new Thickness(10, 0, 10, 0),
+    };
+    private readonly CheckBox autoVoice = new()
+    {
+        Content = "Автоматически подключить нейроголос Хошино при первом запуске (офлайн RU)",
+        IsChecked = true,
+        Margin = new Thickness(0, 10, 0, 0),
+        VerticalContentAlignment = VerticalAlignment.Center,
+    };
+    private readonly CheckBox agree = new()
+    {
+        Content = "Я принимаю условия лицензий",
+        Margin = new Thickness(0, 6, 0, 0),
+        VerticalContentAlignment = VerticalAlignment.Center,
+    };
+    private readonly Button install = new()
+    {
+        Content = "Поселить Хошино",
+        Height = 42,
+        MinWidth = 186,
+        Background = PinkBrush,
+        Foreground = InstallerVisuals.Frozen(Color.FromRgb(0x1E, 0x15, 0x26)),
+        FontWeight = FontWeights.SemiBold,
+    };
+
+    private readonly TextBlock title = new()
+    {
+        Text = "Она уже почти рядом",
+        FontSize = 25,
+        FontWeight = FontWeights.SemiBold,
+        Margin = new Thickness(0, 0, 0, 6),
+    };
+    private readonly TextBlock description = new()
+    {
+        Text = "Выбери стартовую форму и тему острова — остальное всегда можно поменять в настройках.",
+        Foreground = MutedBrush,
+        TextWrapping = TextWrapping.Wrap,
+        LineHeight = 19,
+        Margin = new Thickness(0, 0, 0, 14),
+    };
+    private readonly TextBlock momoQuote = new()
+    {
+        Text = "Ухэ~ Сейчас распакуем подушку и устроимся.",
+        TextWrapping = TextWrapping.Wrap,
+        FontSize = 12,
+        LineHeight = 17,
+        Foreground = TextBrush,
+    };
+    private readonly TextBlock status = new()
+    {
+        TextWrapping = TextWrapping.Wrap,
+        Foreground = MutedBrush,
+        FontSize = 12,
+        Margin = new Thickness(0, 8, 0, 0),
+    };
+    private readonly TextBlock versionLabel = new() { Foreground = MutedBrush, FontSize = 11.5 };
+
+    private readonly StackPanel setupPane = new();
+    private readonly StackPanel progressPane = new() { Visibility = Visibility.Collapsed };
+    private readonly Border progressFill = new()
+    {
+        Height = 8,
+        CornerRadius = new CornerRadius(4),
+        HorizontalAlignment = HorizontalAlignment.Left,
+        Width = 0,
+        Background = InstallerVisuals.CreateHeteroBrush(),
+    };
+    private readonly TextBlock progressPercent = new()
+    {
+        Text = "0%",
+        FontSize = 12,
+        FontWeight = FontWeights.SemiBold,
+        Foreground = PinkBrush,
+        HorizontalAlignment = HorizontalAlignment.Right,
+    };
+    private readonly (Ellipse Dot, TextBlock Label)[] stepRows;
+    private readonly TranslateTransform companionGaze;
+    private readonly Action<bool> setCompanionSleepy;
+
+    private string selectedMode = "DynamicIsland";
+    private string selectedSkin = "HorusGlass";
+    private bool userTouchedStarterChoice;
+    private bool installing;
+    private bool complete;
+
+    public static string Version => Assembly.GetExecutingAssembly().GetName().Version!.ToString(3);
+    public static bool HasPayload => Assembly.GetExecutingAssembly().GetManifestResourceNames().Contains("HoshiBar.CoreSetup.exe");
+
     public InstallerWindow()
     {
-        Title="Hoshino Island — установка";Width=740;Height=510;WindowStyle=WindowStyle.None;ResizeMode=ResizeMode.NoResize;AllowsTransparency=true;Background=Brushes.Transparent;Foreground=Brushes.White;FontFamily=new FontFamily("Segoe UI");FontSize=13;WindowStartupLocation=WindowStartupLocation.CenterScreen;
-        Resources=CreateStyles();
-        var shell=new Border{Background=new SolidColorBrush(Color.FromRgb(26,21,33)),BorderBrush=new SolidColorBrush(Color.FromRgb(72,54,78)),BorderThickness=new Thickness(1),CornerRadius=new CornerRadius(24),Padding=new Thickness(24)};Content=shell;
-        var root=new Grid();root.RowDefinitions.Add(new RowDefinition{Height=GridLength.Auto});root.RowDefinitions.Add(new RowDefinition());root.RowDefinitions.Add(new RowDefinition{Height=GridLength.Auto});shell.Child=root;
-        var bar=new DockPanel{Margin=new Thickness(0,0,0,22)};root.Children.Add(bar);bar.MouseLeftButtonDown+=(_,e)=>{if(e.LeftButton==MouseButtonState.Pressed)DragMove();};
-        var close=new Button{Content="×",FontSize=22,Width=32,Height=32,Padding=new Thickness(0),Background=Brushes.Transparent};DockPanel.SetDock(close,Dock.Right);bar.Children.Add(close);close.Click+=(_,_)=>Close();
-        bar.Children.Add(new TextBlock{Text="HOSHINO ISLAND",FontSize=13,FontWeight=FontWeights.SemiBold,VerticalAlignment=VerticalAlignment.Center,Foreground=Pink});
-        var body=new Grid();body.ColumnDefinitions.Add(new ColumnDefinition{Width=new GridLength(198)});body.ColumnDefinitions.Add(new ColumnDefinition{Width=new GridLength(24)});body.ColumnDefinitions.Add(new ColumnDefinition());Grid.SetRow(body,1);root.Children.Add(body);
-        var companion=new Border{Background=new SolidColorBrush(Color.FromRgb(43,32,50)),CornerRadius=new CornerRadius(20),Padding=new Thickness(18)};body.Children.Add(companion);
-        var companionContent=new StackPanel{VerticalAlignment=VerticalAlignment.Center};companion.Child=companionContent;companionContent.Children.Add(Face());companionContent.Children.Add(new TextBlock{Text="Я всегда тебе помогу",TextAlignment=TextAlignment.Center,TextWrapping=TextWrapping.Wrap,Foreground=Muted,Margin=new Thickness(0,20,0,0),FontSize=12});
-        var details=new StackPanel{VerticalAlignment=VerticalAlignment.Center};Grid.SetColumn(details,2);body.Children.Add(details);details.Children.Add(title);details.Children.Add(description);details.Children.Add(options);
-        options.Children.Add(new TextBlock{Text="Где будет жить остров",Foreground=Muted,FontSize=11,Margin=new Thickness(0,0,0,7)});
-        var folderRow=new DockPanel();options.Children.Add(folderRow);var browse=new Button{Content="…",Width=36,Height=36,Margin=new Thickness(6,0,0,0),Padding=new Thickness(0)};DockPanel.SetDock(browse,Dock.Right);folderRow.Children.Add(browse);folderRow.Children.Add(folder);folder.Text=InstallFolder();browse.Click+=(_,_)=>{var dialog=new OpenFolderDialog{Title="Выбери папку для острова"};if(dialog.ShowDialog(this)==true)folder.Text=Path.Combine(dialog.FolderName,"HoshinoIsland");};
-        options.Children.Add(agree);var legal=new Button{Content="Прочитать лицензии и авторство",Background=Brushes.Transparent,Foreground=Pink,HorizontalAlignment=HorizontalAlignment.Left,Padding=new Thickness(0,5,0,0),FontSize=11};options.Children.Add(legal);legal.Click+=(_,_)=>ShowLicenses();
-        details.Children.Add(progress);details.Children.Add(status);status.Text="При обновлении остров будет закрыт.\nАккаунт, калибровка и история сохранятся.";
-        var bottom=new DockPanel{Margin=new Thickness(0,22,0,0)};Grid.SetRow(bottom,2);root.Children.Add(bottom);DockPanel.SetDock(install,Dock.Right);bottom.Children.Add(install);version.Text=Version;version.VerticalAlignment=VerticalAlignment.Center;bottom.Children.Add(version);
-        agree.Checked+=(_,_)=>RefreshButton();agree.Unchecked+=(_,_)=>RefreshButton();RefreshButton();install.Click+=async(_,_)=>{if(complete){OpenIsland();Close();return;}await Install();};
-        Closing+=(_,e)=>{if(installing)e.Cancel=true;};PreviewKeyDown+=(_,e)=>{if(e.Key==Key.Escape&&!installing)Close();};
+        Title = "HoshiBar — установка";
+        Width = 780;
+        Height = 576;
+        WindowStyle = WindowStyle.None;
+        ResizeMode = ResizeMode.NoResize;
+        AllowsTransparency = true;
+        Background = Brushes.Transparent;
+        Foreground = TextBrush;
+        FontFamily = new FontFamily("Segoe UI Variable Text, Segoe UI");
+        FontSize = 13;
+        WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        Resources = CreateStyles();
+
+        LoadExistingUserChoicesIfAny();
+
+        var shell = new Border
+        {
+            Background = InstallerVisuals.Frozen(InstallerVisuals.DarkBg),
+            BorderBrush = InstallerVisuals.CreateHeteroBrush(),
+            BorderThickness = new Thickness(1.5),
+            CornerRadius = new CornerRadius(24),
+            Padding = new Thickness(24, 20, 24, 22),
+            Effect = new System.Windows.Media.Effects.DropShadowEffect
+            {
+                BlurRadius = 28,
+                ShadowDepth = 6,
+                Direction = 270,
+                Color = Colors.Black,
+                Opacity = 0.55,
+            },
+        };
+        Content = shell;
+
+        var root = new Grid();
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        shell.Child = root;
+
+        // Top header bar: HOSHIBAR · 0.17.0 + Close button
+        var bar = new DockPanel { Margin = new Thickness(0, 0, 0, 16), Background = Brushes.Transparent };
+        bar.MouseLeftButtonDown += (_, e) => { if (e.LeftButton == MouseButtonState.Pressed) DragMove(); };
+        var close = new Button
+        {
+            Content = "✕",
+            FontSize = 13,
+            Width = 30,
+            Height = 30,
+            Padding = new Thickness(0),
+            Background = InstallerVisuals.Frozen(InstallerVisuals.Surface),
+        };
+        DockPanel.SetDock(close, Dock.Right);
+        close.Click += (_, _) => { if (!installing) Close(); };
+        bar.Children.Add(close);
+
+        var brandRow = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        brandRow.Children.Add(new Ellipse { Width = 8, Height = 8, Fill = InstallerVisuals.Frozen(InstallerVisuals.Gold), Margin = new Thickness(0, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center });
+        brandRow.Children.Add(new TextBlock
+        {
+            Text = $"HOSHIBAR · {Version}",
+            FontSize = 12.5,
+            FontWeight = FontWeights.Bold,
+            Foreground = PinkBrush,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        bar.Children.Add(brandRow);
+        root.Children.Add(bar);
+
+        // Two-column body: Left Bento Companion Card | Right Setup / Cozy Progress Pane
+        var body = new Grid();
+        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(216) });
+        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(22) });
+        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        Grid.SetRow(body, 1);
+        root.Children.Add(body);
+
+        // Left Bento Companion Pod (Eye of Horus + Hoshino + WhalePin + MomoTalk quote card)
+        var companionPod = new Border
+        {
+            Background = InstallerVisuals.Frozen(InstallerVisuals.CompanionBg),
+            BorderBrush = InstallerVisuals.Frozen(InstallerVisuals.BorderCol),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(20),
+            Padding = new Thickness(16, 18, 16, 16),
+        };
+        var podStack = new DockPanel();
+        var momoCard = new Border
+        {
+            Background = InstallerVisuals.Frozen(InstallerVisuals.ControlBg),
+            BorderBrush = InstallerVisuals.Frozen(InstallerVisuals.BorderCol),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(13),
+            Padding = new Thickness(11, 9, 11, 9),
+        };
+        var momoGrid = new Grid();
+        momoGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        momoGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        momoGrid.Children.Add(new Border
+        {
+            Width = 3.5,
+            CornerRadius = new CornerRadius(2),
+            Background = PinkBrush,
+            Margin = new Thickness(0, 1, 9, 1),
+        });
+        Grid.SetColumn(momoQuote, 1);
+        momoGrid.Children.Add(momoQuote);
+        momoCard.Child = momoGrid;
+        DockPanel.SetDock(momoCard, Dock.Bottom);
+        podStack.Children.Add(momoCard);
+
+        var (sceneEl, gaze, setSleepy) = InstallerVisuals.CreateHoshinoCompanionScene();
+        companionGaze = gaze;
+        setCompanionSleepy = setSleepy;
+        podStack.Children.Add(sceneEl);
+        companionPod.Child = podStack;
+        body.Children.Add(companionPod);
+
+        MouseMove += (_, e) =>
+        {
+            if (installing) return;
+            var pos = e.GetPosition(companionPod);
+            companionGaze.X = Math.Clamp((pos.X - 108) / 45.0, -3.2, 3.2);
+            companionGaze.Y = Math.Clamp((pos.Y - 95) / 45.0, -2.4, 2.4);
+        };
+
+        // Right details column
+        var details = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        Grid.SetColumn(details, 2);
+        body.Children.Add(details);
+        details.Children.Add(title);
+        details.Children.Add(description);
+
+        BuildSetupPane();
+        stepRows = BuildProgressPane();
+        details.Children.Add(setupPane);
+        details.Children.Add(progressPane);
+        details.Children.Add(status);
+
+        status.Text = "Аккаунт, Obsidian vault, задачи и калибровка голоса бережно сохраняются.";
+
+        // Bottom bar
+        var bottom = new DockPanel { Margin = new Thickness(0, 16, 0, 0) };
+        Grid.SetRow(bottom, 2);
+        root.Children.Add(bottom);
+        DockPanel.SetDock(install, Dock.Right);
+        bottom.Children.Add(install);
+        versionLabel.Text = HasPayload
+            ? $"Пакет установки v{Version} готов"
+            : $"Предпросмотр оболочки v{Version} (пакет не вшит)";
+        versionLabel.VerticalAlignment = VerticalAlignment.Center;
+        bottom.Children.Add(versionLabel);
+
+        agree.Checked += (_, _) => RefreshButton();
+        agree.Unchecked += (_, _) => RefreshButton();
+        RefreshButton();
+
+        install.Click += async (_, _) =>
+        {
+            if (complete)
+            {
+                OpenIsland();
+                Close();
+                return;
+            }
+            await Install();
+        };
+
+        Closing += (_, e) => { if (installing) e.Cancel = true; };
+        PreviewKeyDown += (_, e) => { if (e.Key == Key.Escape && !installing) Close(); };
     }
-    private void RefreshButton()=>install.IsEnabled=!installing&&(complete||agree.IsChecked==true)&&HasPayload;
-    public static bool HasPayload=>Assembly.GetExecutingAssembly().GetManifestResourceNames().Contains("Hoshino.CoreSetup.exe");
+
+    private void BuildSetupPane()
+    {
+        // Starter Shape ("Форма")
+        setupPane.Children.Add(MakeSectionLabel("Форма на экране"));
+        var modeWrap = new WrapPanel { Margin = new Thickness(0, 0, 0, 10) };
+        void RebuildModes()
+        {
+            modeWrap.Children.Clear();
+            foreach (var (id, label) in new[] { ("DynamicIsland", "Плавающий остров"), ("Notch", "Верхний вырез") })
+            {
+                var active = selectedMode == id;
+                var pill = MakeChoicePill(label, active, null);
+                pill.MouseLeftButtonUp += (_, _) =>
+                {
+                    selectedMode = id;
+                    userTouchedStarterChoice = true;
+                    RebuildModes();
+                };
+                modeWrap.Children.Add(pill);
+            }
+        }
+        RebuildModes();
+        setupPane.Children.Add(modeWrap);
+
+        // Starter Skin ("Стартовая тема")
+        setupPane.Children.Add(MakeSectionLabel("Стартовая тема"));
+        var skinWrap = new WrapPanel { Margin = new Thickness(0, 0, 0, 12) };
+        var skins = new (string Id, string Title, Color Swatch)[]
+        {
+            ("HorusGlass", "Horus", InstallerVisuals.Pink),
+            ("ShittimChest", "Shittim", Color.FromRgb(0x29, 0xB6, 0xF6)),
+            ("Win7Aero", "Aero", Color.FromRgb(0x4A, 0xDE, 0xFF)),
+            ("ChibiPop", "Chibi", Color.FromRgb(0xFF, 0x85, 0xAD)),
+            ("PixelTamagotchi", "Pixel", Color.FromRgb(0xC9, 0xED, 0xE3)),
+        };
+        void RebuildSkins()
+        {
+            skinWrap.Children.Clear();
+            foreach (var s in skins)
+            {
+                var active = selectedSkin == s.Id;
+                var pill = MakeChoicePill(s.Title, active, s.Swatch);
+                pill.MouseLeftButtonUp += (_, _) =>
+                {
+                    selectedSkin = s.Id;
+                    userTouchedStarterChoice = true;
+                    RebuildSkins();
+                };
+                skinWrap.Children.Add(pill);
+            }
+        }
+        RebuildSkins();
+        setupPane.Children.Add(skinWrap);
+
+        // Folder path
+        setupPane.Children.Add(MakeSectionLabel("Где будет жить HoshiBar"));
+        var folderRow = new DockPanel();
+        var browse = new Button { Content = "…", Width = 38, Height = 36, Margin = new Thickness(6, 0, 0, 0), Padding = new Thickness(0) };
+        DockPanel.SetDock(browse, Dock.Right);
+        folderRow.Children.Add(browse);
+        folderRow.Children.Add(folder);
+        folder.Text = InstallFolder();
+        browse.Click += (_, _) =>
+        {
+            var dialog = new OpenFolderDialog { Title = "Выбери папку для HoshiBar" };
+            if (dialog.ShowDialog(this) == true)
+                folder.Text = Path.Combine(dialog.FolderName, "HoshiBar");
+        };
+        setupPane.Children.Add(folderRow);
+        setupPane.Children.Add(autoVoice);
+
+        // License agreement row
+        var legalRow = new WrapPanel { VerticalAlignment = VerticalAlignment.Center };
+        legalRow.Children.Add(agree);
+        var legalBtn = new Button
+        {
+            Content = "Лицензии и авторство",
+            Background = Brushes.Transparent,
+            Foreground = PinkBrush,
+            Padding = new Thickness(10, 10, 4, 0),
+            FontSize = 11.5,
+        };
+        legalBtn.Click += (_, _) => ShowLicenses();
+        legalRow.Children.Add(legalBtn);
+        setupPane.Children.Add(legalRow);
+    }
+
+    private (Ellipse Dot, TextBlock Label)[] BuildProgressPane()
+    {
+        progressPane.Children.Add(InstallerVisuals.CreateDriftingWhaleBanner());
+
+        var barHeader = new Grid { Margin = new Thickness(0, 0, 0, 5) };
+        barHeader.Children.Add(new TextBlock { Text = "Распаковка и настройка", FontSize = 12, Foreground = MutedBrush });
+        barHeader.Children.Add(progressPercent);
+        progressPane.Children.Add(barHeader);
+
+        var track = new Border
+        {
+            Height = 8,
+            CornerRadius = new CornerRadius(4),
+            Background = InstallerVisuals.Frozen(InstallerVisuals.ControlBg),
+            ClipToBounds = true,
+            Margin = new Thickness(0, 0, 0, 14),
+            Child = progressFill,
+        };
+        progressPane.Children.Add(track);
+
+        var steps = new[]
+        {
+            "Проверка пакета SHA-256",
+            "Ядро HoshiBar (.NET 8)",
+            "Голосовая модель Vosk ru и ресурсы",
+            "Ярлыки рабочего стола и настройки",
+        };
+        var list = new List<(Ellipse, TextBlock)>();
+        var stepCard = new Border
+        {
+            Background = InstallerVisuals.Frozen(InstallerVisuals.Surface),
+            BorderBrush = InstallerVisuals.Frozen(InstallerVisuals.BorderCol),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(13),
+            Padding = new Thickness(14, 10, 14, 10),
+        };
+        var stepStack = new StackPanel();
+        foreach (var s in steps)
+        {
+            var r = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 3.5, 0, 3.5) };
+            var dot = new Ellipse { Width = 8, Height = 8, Fill = InstallerVisuals.Frozen(InstallerVisuals.BorderCol), Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center };
+            var lbl = new TextBlock { Text = s, FontSize = 12.2, Foreground = MutedBrush, VerticalAlignment = VerticalAlignment.Center };
+            r.Children.Add(dot);
+            r.Children.Add(lbl);
+            stepStack.Children.Add(r);
+            list.Add((dot, lbl));
+        }
+        stepCard.Child = stepStack;
+        progressPane.Children.Add(stepCard);
+        return list.ToArray();
+    }
+
+    private void SetProgressStep(int activeIndex, double pct)
+    {
+        var maxWidth = Math.Max(120, progressPane.ActualWidth > 20 ? progressPane.ActualWidth : 460);
+        progressFill.Width = maxWidth * Math.Clamp(pct / 100.0, 0, 1);
+        progressPercent.Text = $"{pct:0}%";
+
+        for (var i = 0; i < stepRows.Length; i++)
+        {
+            var (dot, lbl) = stepRows[i];
+            if (i < activeIndex)
+            {
+                dot.Fill = InstallerVisuals.Frozen(InstallerVisuals.Sky);
+                lbl.Foreground = TextBrush;
+            }
+            else if (i == activeIndex)
+            {
+                dot.Fill = InstallerVisuals.Frozen(InstallerVisuals.Gold);
+                lbl.Foreground = PinkBrush;
+                lbl.FontWeight = FontWeights.SemiBold;
+            }
+            else
+            {
+                dot.Fill = InstallerVisuals.Frozen(InstallerVisuals.BorderCol);
+                lbl.Foreground = MutedBrush;
+                lbl.FontWeight = FontWeights.Normal;
+            }
+        }
+    }
+
+    private static TextBlock MakeSectionLabel(string text) => new()
+    {
+        Text = text,
+        Foreground = MutedBrush,
+        FontSize = 11.5,
+        Margin = new Thickness(0, 0, 0, 6),
+    };
+
+    private static Border MakeChoicePill(string label, bool active, Color? swatch)
+    {
+        var pill = new Border
+        {
+            CornerRadius = new CornerRadius(11),
+            Padding = new Thickness(12, 6, 12, 6),
+            Margin = new Thickness(0, 0, 7, 6),
+            Cursor = Cursors.Hand,
+            Background = active
+                ? InstallerVisuals.Frozen(Color.FromArgb(0x3D, 0xEA, 0xB0, 0xCF))
+                : InstallerVisuals.Frozen(InstallerVisuals.Surface),
+            BorderBrush = active
+                ? PinkBrush
+                : InstallerVisuals.Frozen(InstallerVisuals.BorderCol),
+            BorderThickness = new Thickness(active ? 1.6 : 1.0),
+        };
+        var row = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        if (swatch is { } c)
+        {
+            row.Children.Add(new Ellipse
+            {
+                Width = 9,
+                Height = 9,
+                Fill = InstallerVisuals.Frozen(c),
+                Margin = new Thickness(0, 0, 7, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+        }
+        row.Children.Add(new TextBlock
+        {
+            Text = label,
+            FontSize = 12,
+            FontWeight = active ? FontWeights.SemiBold : FontWeights.Normal,
+            Foreground = TextBrush,
+        });
+        pill.Child = row;
+        return pill;
+    }
+
+    private static string UserSettingsPath =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "DIsland", "settings.json");
+
+    private void LoadExistingUserChoicesIfAny()
+    {
+        try
+        {
+            if (!File.Exists(UserSettingsPath)) return;
+            var node = JsonNode.Parse(File.ReadAllText(UserSettingsPath));
+            if (node?["Mode"]?.GetValue<string>() is { Length: > 0 } m) selectedMode = m;
+            if (node?["IslandSkin"]?.GetValue<string>() is { Length: > 0 } s) selectedSkin = s;
+        }
+        catch (Exception)
+        {
+        }
+    }
+
+    private void ApplyStarterSettingsSafely()
+    {
+        try
+        {
+            if (autoVoice.IsChecked == true)
+            {
+                var glassDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GlassChat");
+                Directory.CreateDirectory(glassDir);
+                File.WriteAllText(Path.Combine(glassDir, "auto-install-voice.flag"), "v1");
+            }
+        }
+        catch (Exception)
+        {
+        }
+
+        try
+        {
+            var path = UserSettingsPath;
+            var exists = File.Exists(path);
+            if (exists && !userTouchedStarterChoice)
+                return; // Preserve 100% of existing user config untouched during quiet upgrades!
+
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            JsonObject obj;
+            if (exists)
+            {
+                obj = JsonNode.Parse(File.ReadAllText(path)) as JsonObject ?? new JsonObject();
+            }
+            else
+            {
+                obj = new JsonObject();
+            }
+
+            obj["Mode"] = selectedMode;
+            obj["IslandSkin"] = selectedSkin;
+            File.WriteAllText(path, obj.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch (Exception)
+        {
+        }
+    }
+
+    private void RefreshButton() => install.IsEnabled = !installing && (complete || agree.IsChecked == true) && HasPayload;
+
     private static string InstallFolder()
     {
-        using var key=Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\{7AD6B4D0-35EC-44DC-A0A9-E65887F8BFB5}_is1");
-        return key?.GetValue("InstallLocation") as string??Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"Programs","HoshinoIsland");
+        var defaultPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "HoshiBar");
+        var legacyDefault = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "HoshinoIsland");
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\{7AD6B4D0-35EC-44DC-A0A9-E65887F8BFB5}_is1");
+            if (key?.GetValue("InstallLocation") is string existing && existing.Length > 0)
+            {
+                var trimmed = existing.TrimEnd('\\');
+                if (!string.Equals(trimmed, legacyDefault, StringComparison.OrdinalIgnoreCase))
+                    return trimmed;
+            }
+        }
+        catch (Exception) { }
+        return defaultPath;
     }
+
     public static async Task ExtractPayload(string path)
     {
-        var assembly=Assembly.GetExecutingAssembly();var expected=assembly.GetCustomAttributes<AssemblyMetadataAttribute>().Single(a=>a.Key=="PayloadSha256").Value;
-        await using(var input=assembly.GetManifestResourceStream("Hoshino.CoreSetup.exe")??throw new IOException("Не найден пакет приложения"))
-        await using(var output=new FileStream(path,FileMode.CreateNew,FileAccess.Write,FileShare.None))await input.CopyToAsync(output);
-        await using var verify=File.OpenRead(path);var actual=Convert.ToHexString(await SHA256.HashDataAsync(verify));if(!string.Equals(actual,expected,StringComparison.OrdinalIgnoreCase))throw new IOException("Пакет повреждён. Скачай установщик заново.");
+        var assembly = Assembly.GetExecutingAssembly();
+        var expected = assembly.GetCustomAttributes<AssemblyMetadataAttribute>().Single(a => a.Key == "PayloadSha256").Value;
+        await using (var input = assembly.GetManifestResourceStream("HoshiBar.CoreSetup.exe") ?? throw new IOException("Не найден пакет приложения"))
+        await using (var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            await input.CopyToAsync(output);
+
+        await using var verify = File.OpenRead(path);
+        var actual = Convert.ToHexString(await SHA256.HashDataAsync(verify));
+        if (!string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("Пакет повреждён. Скачай установщик заново.");
     }
+
     private async Task Install()
     {
-        if(agree.IsChecked!=true)return;
+        if (agree.IsChecked != true) return;
         string target;
-        try{target=Path.GetFullPath(folder.Text.Trim());var protectedFolders=new[]{Path.GetPathRoot(target),Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),Environment.GetFolderPath(Environment.SpecialFolder.Windows)};if(protectedFolders.Any(p=>string.Equals(p?.TrimEnd('\\'),target.TrimEnd('\\'),StringComparison.OrdinalIgnoreCase)))throw new IOException("Выбери отдельную папку HoshinoIsland.");}
-        catch(Exception e){status.Text=e.Message;return;}
-        installing=true;RefreshButton();options.Visibility=Visibility.Collapsed;progress.Visibility=Visibility.Visible;progress.IsIndeterminate=true;title.Text="Хошино обустраивается";description.Text="Осталось совсем немного. Можно выдохнуть.";status.Text="Подготавливаю установку…";
-        var cacheRoot=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"HoshinoIslandInstaller");var temp=Path.Combine(cacheRoot,Guid.NewGuid().ToString("N"));Directory.CreateDirectory(temp);var core=Path.Combine(temp,"setup.exe");
-        try{
-            await ExtractPayload(core);var logs=Path.Combine(cacheRoot,"Logs");Directory.CreateDirectory(logs);var log=Path.Combine(logs,"setup-"+DateTime.Now.ToString("yyyyMMdd-HHmmss")+".log");
-            var start=new ProcessStartInfo(core){UseShellExecute=false,CreateNoWindow=true};foreach(var arg in new[]{"/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/CLOSEAPPLICATIONS","/LANG=russian","/DIR="+target,"/LOG="+log})start.ArgumentList.Add(arg);
-            using var child=Process.Start(start)??throw new IOException("Не удалось запустить установку");status.Text="Устанавливаю остров и создаю ярлыки…";await child.WaitForExitAsync();if(child.ExitCode!=0)throw new IOException("Установка не завершилась (код "+child.ExitCode+"). Журнал: "+log);
-            if(!File.Exists(Path.Combine(target,"HoshinoIsland.exe")))throw new IOException("Не найден установленный остров");folder.Text=target;complete=true;title.Text="Теперь я рядом";description.Text="Остров установлен.\nНачнём с одного небольшого дела?";status.Text="Готово. Твои данные остались на месте.";progress.IsIndeterminate=false;progress.Value=100;install.Content="Открыть остров";
-        }catch(Exception e){title.Text="Пока не получилось";description.Text="Попробуем ещё раз, без спешки.";status.Text=e.Message;options.Visibility=Visibility.Visible;progress.Visibility=Visibility.Collapsed;install.Content="Повторить установку";}
-        finally{installing=false;RefreshButton();try{var resolved=Path.GetFullPath(temp);if(resolved.StartsWith(Path.GetFullPath(cacheRoot)+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase))Directory.Delete(resolved,true);}catch(IOException){}catch(UnauthorizedAccessException){}}
+        try
+        {
+            target = Path.GetFullPath(folder.Text.Trim());
+            var protectedFolders = new[]
+            {
+                Path.GetPathRoot(target),
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+                Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+                Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            };
+            if (protectedFolders.Any(p => string.Equals(p?.TrimEnd('\\'), target.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)))
+                throw new IOException("Выбери отдельную папку HoshiBar.");
+        }
+        catch (Exception e)
+        {
+            status.Text = e.Message;
+            return;
+        }
+
+        installing = true;
+        RefreshButton();
+        setupPane.Visibility = Visibility.Collapsed;
+        progressPane.Visibility = Visibility.Visible;
+        progressPane.UpdateLayout();
+        setCompanionSleepy(true);
+        momoQuote.Text = "М-м… пока распаковываются файлы, немножко подремлю рядом с китёнком.";
+        title.Text = "Обустраиваем HoshiBar…";
+        description.Text = "Осталось совсем немного — можно спокойно выдохнуть.";
+        status.Text = "Прежние задачи, история AI и Obsidian не затрагиваются.";
+        SetProgressStep(0, 16);
+
+        var cacheRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HoshiBarInstaller");
+        var temp = Path.Combine(cacheRoot, Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(temp);
+        var core = Path.Combine(temp, "setup.exe");
+
+        try
+        {
+            await ExtractPayload(core);
+            SetProgressStep(1, 48);
+
+            var logs = Path.Combine(cacheRoot, "Logs");
+            Directory.CreateDirectory(logs);
+            var log = Path.Combine(logs, "setup-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".log");
+            var start = new ProcessStartInfo(core) { UseShellExecute = false, CreateNoWindow = true };
+            foreach (var arg in new[] { "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS", "/LANG=russian", "/DIR=" + target, "/LOG=" + log })
+                start.ArgumentList.Add(arg);
+
+            using var child = Process.Start(start) ?? throw new IOException("Не удалось запустить установку");
+            SetProgressStep(2, 78);
+            await child.WaitForExitAsync();
+            if (child.ExitCode != 0)
+                throw new IOException("Установка не завершилась (код " + child.ExitCode + "). Журнал: " + log);
+            if (!File.Exists(Path.Combine(target, "HoshiBar.exe")))
+                throw new IOException("Не найден установленный HoshiBar.exe");
+
+            SetProgressStep(3, 94);
+            ApplyStarterSettingsSafely();
+            SetProgressStep(4, 100);
+
+            folder.Text = target;
+            complete = true;
+            setCompanionSleepy(false);
+            momoQuote.Text = "Ухэ~ Всё готово! Пойдём смотреть HoshiBar?";
+            title.Text = "Теперь я рядом";
+            description.Text = "HoshiBar уютно устроился. Начнём с одного спокойного дела?";
+            status.Text = "Готово · Твои настройки, задачи и память сохранены.";
+            install.Content = "Открыть HoshiBar";
+        }
+        catch (Exception e)
+        {
+            setCompanionSleepy(false);
+            momoQuote.Text = "Ничего страшного, сейчас разберёмся без спешки.";
+            title.Text = "Пока не получилось";
+            description.Text = "Попробуем ещё раз.";
+            status.Text = e.Message;
+            setupPane.Visibility = Visibility.Visible;
+            progressPane.Visibility = Visibility.Collapsed;
+            install.Content = "Повторить установку";
+        }
+        finally
+        {
+            installing = false;
+            RefreshButton();
+            try
+            {
+                var resolved = Path.GetFullPath(temp);
+                if (resolved.StartsWith(Path.GetFullPath(cacheRoot) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                    Directory.Delete(resolved, true);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
     }
-    private void OpenIsland(){try{Process.Start(new ProcessStartInfo(Path.Combine(folder.Text,"HoshinoIsland.exe")){UseShellExecute=true});}catch(Exception e){MessageBox.Show(this,e.Message,"Hoshino Island");}}
+
+    private void OpenIsland()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(Path.Combine(folder.Text, "HoshiBar.exe")) { UseShellExecute = true });
+        }
+        catch (Exception e)
+        {
+            MessageBox.Show(this, e.Message, "HoshiBar");
+        }
+    }
+
     private void ShowLicenses()
     {
-        var assembly=Assembly.GetExecutingAssembly();var text=string.Join("\n\n",new[]{"LICENSING.md","LICENSE.txt","MIT.txt","THIRD-PARTY-NOTICES.txt","INNO.txt"}.Select(name=>{using var stream=assembly.GetManifestResourceStream("Hoshino."+name)!;using var reader=new StreamReader(stream);return reader.ReadToEnd();}));
-        new Window{Owner=this,Title="Лицензии и авторство",Width=700,Height=560,WindowStartupLocation=WindowStartupLocation.CenterOwner,Background=new SolidColorBrush(Color.FromRgb(26,21,33)),Content=new TextBox{Text=text,IsReadOnly=true,TextWrapping=TextWrapping.Wrap,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,Padding=new Thickness(20),Background=new SolidColorBrush(Color.FromRgb(26,21,33)),Foreground=Brushes.White,BorderThickness=new Thickness(0)}}.ShowDialog();
+        var assembly = Assembly.GetExecutingAssembly();
+        var text = string.Join("\n\n", new[] { "LICENSING.md", "LICENSE.txt", "MIT.txt", "THIRD-PARTY-NOTICES.txt", "INNO.txt" }.Select(name =>
+        {
+            using var stream = assembly.GetManifestResourceStream("HoshiBar." + name)!;
+            using var reader = new StreamReader(stream);
+            return reader.ReadToEnd();
+        }));
+        new Window
+        {
+            Owner = this,
+            Title = "Лицензии и авторство",
+            Width = 700,
+            Height = 560,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = InstallerVisuals.Frozen(InstallerVisuals.DarkBg),
+            Content = new TextBox
+            {
+                Text = text,
+                IsReadOnly = true,
+                TextWrapping = TextWrapping.Wrap,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Padding = new Thickness(20),
+                Background = InstallerVisuals.Frozen(InstallerVisuals.DarkBg),
+                Foreground = Brushes.White,
+                BorderThickness = new Thickness(0),
+            },
+        }.ShowDialog();
     }
-    private static ResourceDictionary CreateStyles()=> (ResourceDictionary)System.Windows.Markup.XamlReader.Parse("""
+
+    private static ResourceDictionary CreateStyles() => (ResourceDictionary)System.Windows.Markup.XamlReader.Parse("""
     <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-      <Style TargetType="Button"><Setter Property="Foreground" Value="White"/><Setter Property="Background" Value="#382C40"/><Setter Property="Padding" Value="14,8"/><Setter Property="Cursor" Value="Hand"/><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button"><Border x:Name="Frame" Background="{TemplateBinding Background}" CornerRadius="12" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border><ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Frame" Property="Opacity" Value="0.85"/></Trigger><Trigger Property="IsEnabled" Value="False"><Setter TargetName="Frame" Property="Opacity" Value="0.4"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter></Style>
-      <Style TargetType="TextBox"><Setter Property="Background" Value="#302638"/><Setter Property="Foreground" Value="White"/><Setter Property="BorderBrush" Value="#59425F"/><Setter Property="CaretBrush" Value="#EAB0CF"/></Style>
-      <Style TargetType="CheckBox"><Setter Property="Foreground" Value="#D5CBD9"/></Style>
+      <Style TargetType="Button">
+        <Setter Property="Foreground" Value="#F4EDF6"/>
+        <Setter Property="Background" Value="#332B3F"/>
+        <Setter Property="Padding" Value="14,8"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Template">
+          <Setter.Value>
+            <ControlTemplate TargetType="Button">
+              <Border x:Name="Frame" Background="{TemplateBinding Background}" CornerRadius="12" Padding="{TemplateBinding Padding}">
+                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+              </Border>
+              <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Frame" Property="Opacity" Value="0.88"/></Trigger>
+                <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Frame" Property="Opacity" Value="0.38"/></Trigger>
+              </ControlTemplate.Triggers>
+            </ControlTemplate>
+          </Setter.Value>
+        </Setter>
+      </Style>
+      <Style TargetType="TextBox">
+        <Setter Property="Background" Value="#241F2E"/>
+        <Setter Property="Foreground" Value="#F4EDF6"/>
+        <Setter Property="BorderBrush" Value="#4A3D59"/>
+        <Setter Property="CaretBrush" Value="#EAB0CF"/>
+      </Style>
+      <Style TargetType="CheckBox">
+        <Setter Property="Foreground" Value="#D5CBD9"/>
+        <Setter Property="Cursor" Value="Hand"/>
+      </Style>
     </ResourceDictionary>
     """);
-    private static FrameworkElement Face()
-    {
-        var canvas=new Canvas{Width=120,Height=130};var bounce=new TranslateTransform();canvas.RenderTransform=bounce;
-        void Shape(string path,string fill)=>canvas.Children.Add(new System.Windows.Shapes.Path{Data=Geometry.Parse(path),Fill=(Brush)new BrushConverter().ConvertFromString(fill)!});
-        Shape("M55 24C49 11 61 1 72 7c6 3 7 8 4 12-1-6-6-8-11-6-5 2-6 7-4 11C82 21 99 36 101 56l10 8-10 1 6 7-9-1c1 15 2 24 8 35l-10-4 2 12-11-8-2 10c-8-8-11-18-12-29H47c-1 11-4 21-12 29l-2-10-11 8 2-12-10 4c6-11 7-20 8-35l-9 1 6-7-10-1 10-8C21 36 34 24 55 24Z","#EAB0CF");
-        Shape("M30 57C30 36 90 36 90 57V71C90 87 78 97 60 98 42 97 30 87 30 71Z","#FFF0E9");
-        Shape("M23 59C25 34 38 21 60 24 82 21 98 37 98 59L104 65C94 64 89 59 85 54c4 9 3 15-2 19-2-8-3-16-7-23 0 12-6 19-15 24 4-13 1-23-2-32-1 14-5 23-12 28 1-13-1-21-4-27-1 12-5 21-13 26l3-13c-4 4-9 7-15 8Z","#EAB0CF");
-        foreach(var (x,color) in new[]{(47d,"#F2D17D"),(73d,"#83CFF3")}){var eye=new System.Windows.Shapes.Ellipse{Width=11.6,Height=11,Fill=(Brush)new BrushConverter().ConvertFromString(color)!,RenderTransformOrigin=new Point(.5,.5)};Canvas.SetLeft(eye,x-5.8);Canvas.SetTop(eye,71.5);canvas.Children.Add(eye);var eyelid=new ScaleTransform(1,1);eye.RenderTransform=eyelid;var blink=new DoubleAnimationUsingKeyFrames{Duration=TimeSpan.FromSeconds(5),RepeatBehavior=RepeatBehavior.Forever};blink.KeyFrames.Add(new DiscreteDoubleKeyFrame(1,KeyTime.FromTimeSpan(TimeSpan.Zero)));blink.KeyFrames.Add(new LinearDoubleKeyFrame(1,KeyTime.FromTimeSpan(TimeSpan.FromSeconds(4.65))));blink.KeyFrames.Add(new LinearDoubleKeyFrame(.1,KeyTime.FromTimeSpan(TimeSpan.FromSeconds(4.78))));blink.KeyFrames.Add(new LinearDoubleKeyFrame(1,KeyTime.FromTimeSpan(TimeSpan.FromSeconds(4.92))));eyelid.BeginAnimation(ScaleTransform.ScaleYProperty,blink);}
-        bounce.BeginAnimation(TranslateTransform.YProperty,new DoubleAnimation(-3,3,TimeSpan.FromSeconds(2.4)){AutoReverse=true,RepeatBehavior=RepeatBehavior.Forever,EasingFunction=new SineEase{EasingMode=EasingMode.EaseInOut}});
-        return new Viewbox{Child=canvas,Width=154,Height=170};
-    }
 }

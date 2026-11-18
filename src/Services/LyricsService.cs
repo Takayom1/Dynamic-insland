@@ -1,4 +1,4 @@
-// Original Hoshino Island code: Copyright (c) 2026 Takayom1
+// Original HoshiBar code: Copyright (c) 2026 Takayom1
 // SPDX-License-Identifier: MIT
 // Scope and artwork exclusions: see LICENSING.md.
 using System.Globalization;
@@ -52,7 +52,7 @@ public sealed class LyricsService : IDisposable
     public LyricsService(HttpClient? client = null)
     {
         http = client ?? new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
-        http.DefaultRequestHeaders.UserAgent.ParseAdd("GlassChatPrototype/0.5 (+https://github.com/H7gamer/d-island; unofficial-local-modification)");
+        http.DefaultRequestHeaders.UserAgent.ParseAdd($"HoshiBar/{UpdateService.CurrentVersion} (+https://github.com/Takayom1/hoshibar)");
     }
     public async Task<LyricsResult> Get(string title, string artist, string album, double duration, CancellationToken cancel)
     {

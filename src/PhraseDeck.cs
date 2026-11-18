@@ -1,4 +1,4 @@
-// Original Hoshino Island code: Copyright (c) 2026 Takayom1
+// Original HoshiBar code: Copyright (c) 2026 Takayom1
 // SPDX-License-Identifier: MIT
 // Scope and artwork exclusions: see LICENSING.md.
 using System.IO;
@@ -12,6 +12,7 @@ public sealed class PhraseDeck
     private int[] order=Array.Empty<int>();
     private int cursor;
     private string? previous;
+    private int contextualStep;
     public int Count=>phrases.Length;
     public PhraseDeck()
     {
@@ -23,5 +24,11 @@ public sealed class PhraseDeck
     {
         if(cursor>=order.Length){order=Enumerable.Range(0,phrases.Length).ToArray();Random.Shared.Shuffle(order);cursor=0;if(order.Length>1&&phrases[order[0]]==previous)(order[0],order[1])=(order[1],order[0]);}
         return previous=phrases[order[cursor++]];
+    }
+    public string Next(DateTime now, DIsland.Services.WeatherReport? weather)
+    {
+        if(contextualStep++%3==1 && HoshinoAtmosphere.PickContextualPhrase(now,weather) is { } contextual && contextual!=previous)
+            return previous=contextual;
+        return Next();
     }
 }

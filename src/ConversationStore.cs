@@ -1,4 +1,4 @@
-// Original Hoshino Island code: Copyright (c) 2026 Takayom1
+// Original HoshiBar code: Copyright (c) 2026 Takayom1
 // SPDX-License-Identifier: MIT
 // Scope and artwork exclusions: see LICENSING.md.
 using System.IO;
@@ -9,6 +9,7 @@ public sealed class ChatMessage { public string Role { get; set; } = ""; public 
 public sealed class ChatConversation
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string Provider { get; set; } = AssistantProviders.Codex;
     public string AccountKey { get; set; } = "";
     public string? ThreadId { get; set; }
     public string Title { get; set; } = "Новый диалог";

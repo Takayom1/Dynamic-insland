@@ -24,10 +24,10 @@ public partial class MainWindow : Window
 {
     // Design-space width of the root; the window is this times the Size setting. The root's height
     // starts at 300 (XAML) and grows if the expanded content needs more (UpdateWindowHeight).
-    private const double BaseWidth = 720;
+    private const double BaseWidth = 760;
 
     private const double IslandTopMargin = 8;
-    private double ExpandedWidth => Math.Clamp(_settings.PanelWidth, 440, 640);
+    private double ExpandedWidth => 620;
     private const double IslandExpandedRadius = 32;
     private const double NotchCompactRadius = 14;
     private const double NotchExpandedRadius = 26;
@@ -63,6 +63,9 @@ public partial class MainWindow : Window
     private string? _weatherKey;
     private readonly Hotkey _toggleHotkey = new(1);
     private string? _toggleHotkeyText;
+    private readonly Hotkey _ghostHotkey = new(2);
+    private string? _ghostHotkeyText;
+    private readonly DispatcherTimer _ghostTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private ClipboardEvent? _lastCopy;
     private readonly WindowEventWatcher _windows;
     private readonly BackgroundDetector _background;
@@ -73,12 +76,11 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _glassTimer = new(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(33) };
     private WriteableBitmap? _glassBitmap;
     private bool _excludedFromCapture;
-    private bool _captureUnsupported;
 
 
-    private readonly Spring _width = new(150);
-    private readonly Spring _height = new(34);
-    private readonly Spring _radius = new(17);
+    private readonly Spring _width = new(168);
+    private readonly Spring _height = new(44);
+    private readonly Spring _radius = new(22);
     // 0 = Dynamic Island, 1 = notch: switching shape morphs between the two instead of jumping.
     private readonly Spring _notch = new(0);
     private readonly Stopwatch _frameClock = Stopwatch.StartNew();
@@ -115,15 +117,43 @@ public partial class MainWindow : Window
         _calendar = new CalendarService(settings);
         _alarms = new AlarmService(settings);
         InitializeComponent();
-        CompactHoshinoHost.Content = new HoshinoCompanion(settings) { Playing = () => _media.Current?.IsPlaying == true, Listening = () => _aiPanel?.IsListening == true, Working = () => AssistantRuntime.Busy };
-        HomeHoshinoHost.Content = new HoshinoCompanion(settings) { Playing=()=>_media.Current?.IsPlaying==true, Listening=()=>_aiPanel?.IsListening==true, Working=()=>AssistantRuntime.Busy };
+        _compactHoshino = new HoshinoCompanion(settings) { IsCompactPill = true, SuppressFloatingHalo = true, Playing = () => _media.Current?.IsPlaying == true, AudioLevel = () => _audioPeak, Listening = () => _aiPanel?.IsListening == true, Working = () => AssistantRuntime.Busy, Focusing = () => _timer.IsActive };
+        _homeHoshino = new HoshinoCompanion(settings) { SuppressFloatingHalo = true, Playing = () => _media.Current?.IsPlaying == true, AudioLevel = () => _audioPeak, Listening = () => _aiPanel?.IsListening == true, Working = () => AssistantRuntime.Busy, Focusing = () => _timer.IsActive, Weather = () => _weather.Current, EnableHeadpat = true };
+        _lyricsHoshino = new HoshinoCompanion(settings) { IsCompactPill = true, SuppressFloatingHalo = true, Playing = () => _media.Current?.IsPlaying == true, AudioLevel = () => _audioPeak, Listening = () => _aiPanel?.IsListening == true, Working = () => AssistantRuntime.Busy, Focusing = () => _timer.IsActive };
+        _homeHoshino.Headpatted += SetCompanionPhraseText;
+        CompactHoshinoHost.Content = _compactHoshino;
+        HomeHoshinoHost.Content = _homeHoshino;
+        LyricsHoshinoHost.Content = _lyricsHoshino;
+        _mediaArtDecorator = new IslandMediaArtDecorator(settings);
+        MediaArtLargeBackHost.Content = _mediaArtDecorator.LargeBackLayer;
+        MediaArtLargeFrontHost.Content = _mediaArtDecorator.LargeFrontLayer;
+        MediaArtSmallBackHost.Content = _mediaArtDecorator.SmallBackLayer;
+        MediaArtSmallFrontHost.Content = _mediaArtDecorator.SmallFrontLayer;
+        _weatherRim = new IslandWeatherRim(settings);
+        WeatherRimHost.Content = _weatherRim;
+        var (voiceWavePanel, voiceWaveBars) = IslandChromeRenderer.CreateVoiceWaveform();
+        _voiceWaveBars = voiceWaveBars;
+        VoiceWaveformHost.Content = voiceWavePanel;
+        _aquarium = new AbydosAquariumView(settings, () => _media.Current?.IsPlaying == true, () => _aiPanel?.IsListening == true, () => AssistantRuntime.Busy, () => _timer.IsActive, () => _weather.Current);
+        AquariumView.Children.Add(_aquarium);
         _aiPanel = new AiChatPanel(settings);
         AiPage.Content = _aiPanel;
         NextPhrase();
         _lyricsPanel = new LyricsPanel(settings);
         LyricsHost.Content = _lyricsPanel;
         _lyricsPanel.LayoutChanged += () => { if(IsLoaded && _state.IsExpanded && _page==ExpandedPage.Home) Render(); };
-        HomeTasksHost.Content = new HomeTasksPanel(_notes, BeginTyping);
+        _coworking = new CoworkingBar(settings, _notes, _timer);
+        CoworkingHost.Content = _coworking;
+        _coworking.LayoutChanged += () => { if (IsLoaded && _state.IsExpanded && _page == ExpandedPage.Home) Render(); };
+        _homeTasks = new HomeTasksPanel(_notes, BeginTyping, () => _settings.FocusTaskId, id => _coworking.BindTask(id));
+        _homeTasks.LayoutChanged += () => { if (IsLoaded && _state.IsExpanded && _page == ExpandedPage.Home) Render(); };
+        _coworking.FocusTaskChanged += () => _homeTasks.RefreshFocusState();
+        HomeTasksHost.Content = _homeTasks;
+        _notes.TaskCompleted += (_, allDone) => { if (allDone) { _homeHoshino.TriggerHappyTaskReaction(); _compactHoshino.TriggerHappyTaskReaction(); } };
+        _qrShare = new LocalQrShareService(_shelf);
+        _qrPanel = new ShelfQrPanel(_qrShare);
+        ShelfQrHost.Content = _qrPanel;
+        _qrPanel.LayoutChanged += () => { if (IsLoaded && _state.IsExpanded && _page == ExpandedPage.Shelf) Render(); };
         _obsidian=new ObsidianSync(_notes);
         _journal=new JournalPanel(BeginTyping);JournalHost.Content=_journal;
         _journal.LayoutChanged+=()=>{if(IsLoaded&&_state.IsExpanded&&_page==ExpandedPage.Calendar)Render();};
@@ -133,21 +163,19 @@ public partial class MainWindow : Window
         {
             if (_lyricsPanel.CompactEnabled) { _lyricsPanel.Update(_media.Current); _compactLyricsTimer.Start(); }
             else _compactLyricsTimer.Stop();
-            HomeLyricsToggle.Opacity = 1;
-            HomeLyricsToggle.Background=_lyricsPanel.CompactEnabled ? (Brush)FindResource("HoshinoControl") : Brushes.Transparent;
-            HomeLyricsToggle.ToolTip=_lyricsPanel.CompactEnabled ? "Лирика включена — нажмите, чтобы выключить" : "Показать лирику на островке";
-            LyricsFeedbackText.Text=_lyricsPanel.CompactEnabled ? "Лирика включена · появится, когда свернёшь остров" : "Лирика выключена";
-            LyricsFeedback.Visibility=Visibility.Visible;
-            UpdateSecondActivity(); Render();
+            StyleLrcToggleButton();
+            UpdateSecondActivity();
+            Render();
         };
         _lyricsPanel.CompactChanged += UpdateCompactLyric;
         _aiPanel.TypingRequested += BeginTyping;
-        VoiceFocusHoshino.Content=new HoshinoCompanion(settings){Listening=()=>_aiPanel.IsListening,Working=()=>AssistantRuntime.Busy||_aiPanel.PreparingVoice||_aiPanel.IsTranscribing,Playing=()=>_aiPanel.IsSpeaking};
+        _voiceHoshino = new HoshinoCompanion(settings){SuppressFloatingHalo=true,AudioLevel=()=>_audioPeak,Listening=()=>_aiPanel.IsListening,Working=()=>AssistantRuntime.Busy||_aiPanel.PreparingVoice||_aiPanel.IsTranscribing,Playing=()=>_aiPanel.IsSpeaking};
+        VoiceFocusHoshino.Content = _voiceHoshino;
         _aiPanel.VoiceActivated+=BeginVoiceFocus;
         _aiPanel.ActivityChanged+=text=>{VoiceActivityText.Text=text;VoiceActivityText.ToolTip=text;};
-        _aiPanel.VoiceStateChanged+=()=>{if(!IsLoaded)return;if(_voiceFocus&&!_aiPanel.VoiceInteraction)EndVoiceFocus();UpdatePrivacyIndicators();};
+        _aiPanel.VoiceStateChanged+=()=>{if(!IsLoaded)return;if(_voiceFocus&&!_aiPanel.VoiceInteraction)EndVoiceFocus();UpdatePrivacyIndicators();UpdateVoiceWakeChip();UpdateEqualizer();};
         PrivacyChip.ToolTip="Нажмите, чтобы выключить голосовую активацию";
-        PrivacyChip.MouseLeftButtonUp+=(_,e)=>{if(_aiPanel.MicrophoneActive)_aiPanel.DisableWake();e.Handled=true;};
+        PrivacyChip.MouseLeftButtonUp+=(_,e)=>{if(_aiPanel.MicrophoneActive)_aiPanel.DisableWake();UpdateVoiceWakeChip();e.Handled=true;};
 
         _windows = new WindowEventWatcher(TimeSpan.FromMilliseconds(30));
         _background = new BackgroundDetector(GetIslandScreenRect, _windows);
@@ -161,7 +189,7 @@ public partial class MainWindow : Window
 
         _views = new FrameworkElement[]
         {
-            VoiceFocusView, ClockView, MediaView, TimerView, StopwatchView, OsdView, BatteryView, TimerDoneView, InfoView, NotificationView,
+            VoiceFocusView, AquariumView, ClockView, MediaView, TimerView, StopwatchView, OsdView, BatteryView, TimerDoneView, InfoView, NotificationView,
             ExpandedView, LyricsView,
         };
         foreach (var view in _views)
@@ -180,6 +208,9 @@ public partial class MainWindow : Window
         _timer.StateChanged += OnTimerStateChanged;
         _timer.Finished += OnTimerFinished;
         _media.Changed += OnMediaChanged;
+        ProgressHit.SizeChanged += (_, _) => { if (_state.IsExpanded) UpdateProgress(); };
+        ProgressTrackBorder.SizeChanged += (_, _) => { if (_state.IsExpanded) UpdateProgress(); };
+        OsdTrackBorder.SizeChanged += (_, _) => UpdateOsdBarWidth();
         _media.TimelineChanged += () =>
         {
             if (!_state.IsExpanded) return;
@@ -199,6 +230,8 @@ public partial class MainWindow : Window
         _privacy.Changed += OnPrivacyChanged;
         _toggleHotkey.Pressed += () => SetIslandHidden(!IslandHidden);
         _keyboard.ShortcutPressed += () => SetIslandHidden(!IslandHidden); // same shortcut, when another app owns it
+        _ghostHotkey.Pressed += () => SetGhostMode(!IsGhostMode);
+        _ghostTimer.Tick += OnGhostTimerTick;
         _weather.Changed += () =>
         {
             UpdateWeather();
@@ -269,7 +302,148 @@ public partial class MainWindow : Window
 
     /// <summary>The gear button or a right-click on the island asked for the settings window.</summary>
     public event Action? SettingsRequested;
-    internal bool CanRestartForDevelopment=>!_typing&&!AssistantRuntime.Busy&&!_timer.IsActive&&!_stopwatch.IsActive&&!_aiPanel.IsListening&&!_aiPanel.IsTranscribing&&!_aiPanel.IsCalibrating&&!_aiPanel.IsSpeaking&&!_aiPanel.PreparingVoice&&string.IsNullOrWhiteSpace(_aiPanel.Input.Text);
+    public event Action? TrayStateChanged;
+
+    internal MediaService MediaSource => _media;
+    internal TimerService TimerSource => _timer;
+    internal WeatherReport? CurrentWeather => _weather.Current;
+    internal LyricsPanel LyricsSource => _lyricsPanel;
+    internal int OpenTasksCount => _notes.Todos.Count(t => !t.Done);
+    internal bool IsVoiceOrAssistantActive => AssistantRuntime.Busy || (_aiPanel?.IsListening ?? false) || (_aiPanel?.IsTranscribing ?? false);
+    internal bool IsGameSuppressed => _gameSuppressed;
+
+    public bool IsGhostMode { get; private set; }
+    public DateTime? GhostModeUntil { get; private set; }
+
+    public void SetGhostMode(bool enabled, TimeSpan? duration = null)
+    {
+        if (enabled && IslandHidden) SetIslandHidden(false);
+        IsGhostMode = enabled;
+        GhostModeUntil = enabled && duration is { } d ? DateTime.Now.Add(d) : null;
+        if (GhostModeUntil is not null) _ghostTimer.Start();
+        else _ghostTimer.Stop();
+
+        if (enabled)
+        {
+            _hoverTimer.Stop();
+            EndTyping(restoreFocus: true);
+            SetExpanded(false);
+        }
+
+        ApplyGhostWindowStyle();
+        _themeKey = null;
+        ApplyTheme();
+        ApplyGeometry();
+        TrayStateChanged?.Invoke();
+    }
+
+    private void OnGhostTimerTick(object? sender, EventArgs e)
+    {
+        if (!IsGhostMode || GhostModeUntil is not { } until)
+        {
+            _ghostTimer.Stop();
+            return;
+        }
+        if (DateTime.Now >= until)
+            SetGhostMode(false);
+        else
+            TrayStateChanged?.Invoke();
+    }
+
+    private void ApplyGhostWindowStyle()
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd == IntPtr.Zero) return;
+        var style = NativeMethods.GetExStyle(hwnd);
+        if (IsGhostMode)
+            style |= NativeMethods.WS_EX_TRANSPARENT;
+        else
+            style &= ~NativeMethods.WS_EX_TRANSPARENT;
+        NativeMethods.SetExStyle(hwnd, style);
+        Root.IsHitTestVisible = !IslandHidden && !IsGhostMode;
+        Root.Opacity = IsGhostMode ? Math.Clamp(_settings.GhostModeOpacity, 0.25, 0.85) : 1.0;
+    }
+
+    public void TriggerVoiceWakeFromTray()
+    {
+        if (IsGhostMode) SetGhostMode(false);
+        if (IslandHidden) SetIslandHidden(false);
+        OpenAiChat();
+        _aiPanel.StartDictation();
+        TrayStateChanged?.Invoke();
+    }
+
+    public void CycleMonitor()
+    {
+        var screens = System.Windows.Forms.Screen.AllScreens;
+        if (screens.Length <= 1) return;
+        var current = FullscreenService.TargetScreen(_settings.MonitorDeviceName);
+        var idx = Array.FindIndex(screens, s => string.Equals(s.DeviceName, current.DeviceName, StringComparison.OrdinalIgnoreCase));
+        var next = screens[(idx + 1 + screens.Length) % screens.Length];
+        _settings.MonitorDeviceName = next.Primary ? "" : next.DeviceName;
+        _settings.NotifyChanged();
+        _settings.Save();
+        TrayStateChanged?.Invoke();
+    }
+
+    public void ResetPosition()
+    {
+        _settings.TopOffset = 0;
+        _settings.MonitorDeviceName = "";
+        if (IsGhostMode) SetGhostMode(false);
+        if (IslandHidden) SetIslandHidden(false);
+        _settings.NotifyChanged();
+        _settings.Save();
+        Reposition();
+        TrayStateChanged?.Invoke();
+    }
+
+    public void RevealOnUserLaunch()
+    {
+        if (_gameSuppressed) ApplyGameMode(false);
+        if (IsGhostMode) SetGhostMode(false);
+        if (IslandHidden) SetIslandHidden(false);
+        if (!IsVisible) Show();
+        Root.BeginAnimation(OpacityProperty, null);
+        Root.Opacity = 1;
+        Reposition();
+        Render();
+        KeepOnTop(force: true);
+        TrayStateChanged?.Invoke();
+    }
+
+    public void DropFilesFromTray(string[] paths)
+    {
+        if (paths.Length == 0) return;
+        _shelf.Add(paths);
+        if (!_settings.ShelfEnabled)
+        {
+            _settings.ShelfEnabled = true;
+            _settings.NotifyChanged();
+            _settings.Save();
+        }
+        if (IsGhostMode) SetGhostMode(false);
+        if (IslandHidden) SetIslandHidden(false);
+        SetExpanded(true);
+        ShowPage(ExpandedPage.Shelf, animate: false);
+        _qrPanel.Open(paths, singleItem: paths.Length == 1);
+        Render();
+    }
+
+    public void OpenShelfQrFromTray()
+    {
+        if (!_settings.ShelfEnabled)
+        {
+            _settings.ShelfEnabled = true;
+            _settings.NotifyChanged();
+            _settings.Save();
+        }
+        SetExpanded(true);
+        ShowPage(ExpandedPage.Shelf, animate: false);
+        _qrPanel.Open(_shelf.Items.ToArray(), singleItem: false);
+        Render();
+    }
+    internal bool CanRestartForDevelopment=>!_typing&&!AssistantRuntime.Busy&&!_timer.IsActive&&!_stopwatch.IsActive&&!_qrShare.IsRunning&&!_aiPanel.IsListening&&!_aiPanel.IsTranscribing&&!_aiPanel.IsCalibrating&&!_aiPanel.IsSpeaking&&!_aiPanel.PreparingVoice&&string.IsNullOrWhiteSpace(_aiPanel.Input.Text);
 
     /// <summary>Hidden with the shortcut or the tray menu: nothing shows, alerts included.</summary>
     public bool IslandHidden { get; private set; }
@@ -289,6 +463,7 @@ public partial class MainWindow : Window
             SetExpanded(false);
             _state.DismissTransient();
             IslandHidden = true; // Render() is skipped from here on
+            _aquarium.SetActive(false);
             Root.IsHitTestVisible = false;
             UpdateEqualizer(); // stops the bars' meter loop while nothing can be seen
             if (!IsVisible)
@@ -319,11 +494,13 @@ public partial class MainWindow : Window
                 UpdateGlass();
                 KeepOnTop(force: true);
             }
-            Root.IsHitTestVisible = true;
-            FadeRoot(1, 200);
+            Root.IsHitTestVisible = !IsGhostMode;
+            ApplyGhostWindowStyle();
+            FadeRoot(IsGhostMode ? Math.Clamp(_settings.GhostModeOpacity, 0.25, 0.85) : 1, 200);
             Render(); // whatever changed while hidden
             UpdateEqualizer();
         }
+        TrayStateChanged?.Invoke();
     }
 
     private void FinishHide()
@@ -360,12 +537,22 @@ public partial class MainWindow : Window
             : null;
         _keyboard.Update();
         _settings.HotkeyProblem = _keyboard.Shortcut is not null
-            ? $"Another app also uses {text}. Hoshino Island still responds to it, but that app may react too. Pick another shortcut to avoid that."
+            ? $"Сочетание {text} уже занято другой программой. HoshiBar всё равно перехватывает его, но лучше выбрать свободную комбинацию."
             : problem;
+
+        if (_settings.GhostModeHotkey != _ghostHotkeyText)
+        {
+            _ghostHotkeyText = _settings.GhostModeHotkey;
+            _settings.GhostHotkeyProblem = _ghostHotkey.Set(_settings.GhostModeHotkey);
+        }
+        TrayStateChanged?.Invoke();
     }
 
     private bool IsNotch => _settings.Mode == IslandMode.Notch;
-    private bool IsGlass => _settings.Material == IslandMaterial.LiquidGlass;
+    // Fixed, non-editable per-theme blur physics: optical crystal blur on Win7 Aero, heavy matte frosted blur on Shittim Chest,
+    // dark smoked blur on Horus Glass, and 0 blur on flat Chibi Pop & Pixel Tamagotchi (disabled in Ghost Mode for 100% click-through).
+    private bool IsGlass => !IslandSkinEngine.Current.DisableGlassBlur && !_energySaver && !IsGhostMode && !IslandHidden;
+    private double EffectiveGlassBlur => IsGlass ? IslandSkinEngine.Current.FixedBlurRatio : 0;
     /// <summary>How far the shape is between island (0) and notch (1), mid-morph after a shape change.</summary>
     private double NotchAmount => Math.Clamp(_notch.Value, 0, 1);
     private double PillTop => IslandTopMargin * MorphLower(NotchAmount);
@@ -378,8 +565,8 @@ public partial class MainWindow : Window
     private static double MorphSquare(double t) => Math.Clamp((t - 0.4) / 0.3, 0, 1);
     private static double MorphFlare(double t) => Math.Clamp((t - 0.7) / 0.3, 0, 1);
     private double SpeedFactor => Math.Clamp(_settings.AnimationSpeed, 0.25, 4);
-    private double Scale => Math.Clamp(_settings.IslandScale, 0.5, 2);
-    private double Roundness => Math.Clamp(_settings.CornerRoundness, 0, 1);
+    private double Scale => 1.0;
+    private double Roundness => 1.0;
 
     // ---------------------------------------------------------------- settings
 
@@ -406,15 +593,43 @@ public partial class MainWindow : Window
         Root.LayoutTransform = Math.Abs(Scale - 1) < 0.001 ? Transform.Identity : new ScaleTransform(Scale, Scale);
         Width = BaseWidth * Scale;
         UpdateWindowHeight();
-        FontFamily = new FontFamily($"{_settings.FontFamily}, Segoe UI");
-
         HoshinoPalette.Apply(_settings);
+        var spec = IslandSkinEngine.Current;
+        FontFamily = IslandSkinEngine.GetThemeFontFamily(spec);
+        TextOptions.SetTextFormattingMode(this, TextFormattingMode.Ideal);
+        SnapsToDevicePixels = spec.IsPixelMode;
+        UseLayoutRounding = spec.IsPixelMode;
+        _homeHoshino.EnableHeadpat = _settings.EnableHeadpat;
         ExpandedView.Width = ExpandedWidth;
-        HomeCompanionCard.Visibility = _settings.ShowHoshino ? Visibility.Visible : Visibility.Collapsed;
-        HomeTop.ColumnDefinitions[0].Width = new GridLength(_settings.ShowHoshino ? 120 : 0);
-        ExpandedContent.Margin = _settings.CompactDesign ? new Thickness(14, 9, 14, 10) : new Thickness(22, 16, 22, 18);
-        MediaArtLarge.Width = MediaArtLarge.Height = Math.Clamp(_settings.CoverSize, 64, 112);
-        _aiPanel.ApplyDesign(); _lyricsPanel.ApplyDesign(); UpdateCompactLyric();
+        HomeCompanionOuter.Visibility = _settings.ShowHoshino ? Visibility.Visible : Visibility.Collapsed;
+        HomeTop.ColumnDefinitions[0].Width = new GridLength(_settings.ShowHoshino ? 242 : 0);
+        ExpandedContent.Margin = spec.IsPixelMode
+            ? new Thickness(20, IsNotch ? 14 : 24, 20, 14)
+            : spec.IsCartoonSticker
+                ? new Thickness(18, 12, 22, 16)
+                : new Thickness(18, 12, 18, 14);
+        if (IsGhostMode) ApplyGhostWindowStyle();
+
+        var hasCompactHoshino = _settings.ShowHoshino;
+        var compactH = spec.IsPixelMode ? 46.0 : 44.0;
+        MediaView.Height = compactH;
+        TimerView.Height = compactH;
+        StopwatchView.Height = compactH;
+        OsdView.Height = compactH;
+        AquariumView.Height = compactH;
+        MediaCompactArtHost.Margin = new Thickness(hasCompactHoshino ? 42 : 6, 0, 0, 0);
+        MediaView.Width = hasCompactHoshino ? 354 : 308;
+        TimerCompactInner.Margin = new Thickness(hasCompactHoshino ? 46 : 18, 0, 20, 0);
+        TimerView.Width = hasCompactHoshino ? 196 : 164;
+        StopwatchCompactInner.Margin = new Thickness(hasCompactHoshino ? 46 : 18, 0, 20, 0);
+        StopwatchView.Width = hasCompactHoshino ? 196 : 164;
+
+        var coverSize = Math.Clamp(_settings.CoverSize, 62, 72);
+        MediaArtLarge.Width = MediaArtLarge.Height = coverSize;
+        _mediaArtDecorator.UpdateState(_media.Current?.IsPlaying == true, IslandHidden, coverSize, MediaArtLarge, MediaArtSmall);
+        ApplySkinLayout(spec);
+        _aiPanel.ApplyDesign(); _lyricsPanel.ApplyDesign(); _aquarium.ApplySettings(); _coworking.RefreshGoal(); UpdateCompactLyric();
+        UpdateVoiceWakeChip();
         UpdateViewMargins();
 
         if (_settings.AdaptiveBackground) { if (IsLoaded) _background.Start(); }
@@ -440,6 +655,7 @@ public partial class MainWindow : Window
         _clipboard.Update();
 
         BuildQuickApps();
+        _clockWeatherKey = null;
         UpdateClock();
         UpdateEqualizer(); // real waveform setting
         _alarms.Reschedule();
@@ -470,6 +686,7 @@ public partial class MainWindow : Window
             _keyboard.Attach(source);
             _clipboard.Attach(source);
             _toggleHotkey.Attach(source);
+            _ghostHotkey.Attach(source);
             UpdateToggleHotkey();
         }
     }
@@ -613,7 +830,7 @@ public partial class MainWindow : Window
     {
         if (App.Updates is not { } updates) return;
 
-        // "Hoshino Island updated" in the island and the What's New window, once, on the first start after an
+        // "HoshiBar updated" in the island and the What's New window, once, on the first start after an
         // update (automatic, or a newer installer run by hand; not on a fresh install).
         var current = UpdateService.CurrentVersion;
         var updatedFrom = Version.TryParse(_settings.LastRunVersion, out var last) && last < current ? last : null;
@@ -624,8 +841,8 @@ public partial class MainWindow : Window
         if (updatedFrom is not null)
         {
             _ = ShowWhatsNewSoonAsync(updatedFrom);
-            _ = Task.Delay(3000).ContinueWith(_ => ShowInfo(TransientPriority.Calendar, 300, "", "Hoshino Island updated",
-                    $"Version {current}", detailBrush: (Brush)FindResource("Green"), seconds: 5),
+            _ = Task.Delay(3000).ContinueWith(_ => ShowInfo(TransientPriority.Calendar, 300, "", "HoshiBar обновлён",
+                    $"Версия {current}", detailBrush: (Brush)FindResource("Green"), seconds: 5),
                 TaskScheduler.FromCurrentSynchronizationContext());
         }
         if (_settings.LastRunVersion != current.ToString())
@@ -760,6 +977,10 @@ public partial class MainWindow : Window
     private void OnClosed(object? sender, EventArgs e)
     {
         _gameWatch.Stop();
+        _mediaArtDecorator.Dispose();
+        _weatherRim.Dispose();
+        _qrShare.Dispose();
+        _aquarium.Dispose();
         _journal.Dispose();
         _obsidian.Dispose();
         _aiPanel.Dispose();
@@ -784,6 +1005,8 @@ public partial class MainWindow : Window
         _calendar.Dispose();
         _notes.Dispose(); // writes any unsaved typing
         _toggleHotkey.Dispose();
+        _ghostHotkey.Dispose();
+        _ghostTimer.Stop();
         _volume.Dispose();
         _brightness.Dispose();
         _media.Dispose();
@@ -822,9 +1045,12 @@ public partial class MainWindow : Window
         FrameworkElement view;
         double width, height, radius;
 
+        var spec = IslandSkinEngine.Current;
+        var expandedRadius = IsNotch ? Math.Min(NotchExpandedRadius, spec.ExpandedHullRadius) : spec.ExpandedHullRadius;
+
         if (_voiceFocus)
         {
-            view=VoiceFocusView;width=320;height=250;radius=IsNotch?NotchExpandedRadius:IslandExpandedRadius;
+            view=VoiceFocusView;width=320;height=250;radius=expandedRadius;
         }
         else if (_state.IsExpanded)
         {
@@ -832,7 +1058,7 @@ public partial class MainWindow : Window
             view = ExpandedView;
             width = ExpandedWidth;
             height = MeasureExpandedHeight();
-            radius = IsNotch ? NotchExpandedRadius : IslandExpandedRadius;
+            radius = expandedRadius;
         }
         else if (ShowingCompactLyrics)
         {
@@ -841,10 +1067,17 @@ public partial class MainWindow : Window
             height = LyricsView.Height;
             radius = IsNotch ? NotchCompactRadius : Math.Min(24, height / 2);
         }
+        else if (ShowingAquarium)
+        {
+            view = AquariumView;
+            width = AquariumView.Width;
+            height = AquariumView.Height;
+            radius = IsNotch ? NotchCompactRadius : height / 2;
+        }
         else
         {
             view = ViewFor(_state.CurrentView);
-            width = view.Width + (ShowCompactCompanion ? 44 : 0);
+            width = view.Width;
             height = view.Height;
             radius = IsNotch ? Math.Min(NotchCompactRadius, height / 2) : height / 2;
         }
@@ -852,6 +1085,7 @@ public partial class MainWindow : Window
         foreach(var item in _views)item.Visibility=_voiceFocus&&item!=VoiceFocusView?Visibility.Hidden:Visibility.Visible;
         ActivityBubble.Visibility=_voiceFocus?Visibility.Collapsed:ActivityBubble.Visibility;
         CompactHoshinoHost.Visibility = ShowCompactCompanion ? Visibility.Visible : Visibility.Collapsed;
+        _aquarium.SetActive(view == AquariumView && !IslandHidden && !_gameSuppressed);
         SwitchTo(view);
         AnimateTo(width, height, radius * Roundness);
     }
@@ -884,21 +1118,519 @@ public partial class MainWindow : Window
 #endif
         ClockSection.Visibility = media is null ? Visibility.Visible : Visibility.Collapsed;
         ProgressRow.Visibility = media is { Duration.Ticks: > 0 } ? Visibility.Visible : Visibility.Collapsed;
-        TimerPresets.Visibility = _timer.IsActive ? Visibility.Collapsed : Visibility.Visible;
-        TimerActivePanel.Visibility = _timer.IsActive ? Visibility.Visible : Visibility.Collapsed;
+        var isPixel = IslandSkinEngine.Current.IsPixelMode;
+        TimerPresets.Visibility = isPixel || _timer.IsActive ? Visibility.Collapsed : Visibility.Visible;
+        TimerActivePanel.Visibility = isPixel || !_timer.IsActive ? Visibility.Collapsed : Visibility.Visible;
+        FocusDockBorder.Visibility = isPixel && !_stopwatch.IsActive ? Visibility.Collapsed : Visibility.Visible;
         StopwatchPanel.Visibility = _stopwatch.IsActive ? Visibility.Visible : Visibility.Collapsed;
-        StopwatchStartButton.Visibility = _stopwatch.IsActive ? Visibility.Collapsed : Visibility.Visible;
         if (_stopwatch.IsActive) StopwatchTextLarge.Text = StopwatchService.Format(_stopwatch.Elapsed, tenths: true);
         UpdateProgress();
     }
 
     // ---------------------------------------------------------------- expanded pages
 
+    private readonly HoshinoCompanion _compactHoshino;
+    private readonly HoshinoCompanion _homeHoshino;
+    private readonly HoshinoCompanion _lyricsHoshino;
+    private readonly HoshinoCompanion _voiceHoshino;
+    private readonly IslandMediaArtDecorator _mediaArtDecorator;
+    private readonly IslandWeatherRim _weatherRim;
+    private readonly Rectangle[] _voiceWaveBars;
+    private double _audioPeak;
+    private string? _chromeOverlayKey;
+    private readonly AbydosAquariumView _aquarium;
+    private readonly CoworkingBar _coworking;
+    private readonly HomeTasksPanel _homeTasks;
+    private readonly LocalQrShareService _qrShare;
+    private readonly ShelfQrPanel _qrPanel;
     private readonly AiChatPanel _aiPanel;
     private readonly ObsidianSync _obsidian;
     private readonly JournalPanel _journal;
     private readonly PhraseDeck _phrases=new();
-    private void NextPhrase() {var phrase=_phrases.Next();HomePhrase.Text=phrase;HomePhrase.ToolTip=phrase;_aiPanel.SetCompanionPhrase(phrase); }
+    private void NextPhrase() => SetCompanionPhraseText(_phrases.Next(DateTime.Now, _settings.WeatherEnabled ? _weather.Current : null));
+    private void SetCompanionPhraseText(string phrase)
+    {
+        HomePhrase.Text = phrase;
+        HomePhrase.ToolTip = phrase;
+        _aiPanel?.SetCompanionPhrase(phrase);
+        if (IsLoaded && _state.IsExpanded && _page == ExpandedPage.Home) Render();
+    }
+
+    private void OnHomePhraseClick(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+        NextPhrase();
+    }
+
+    private void OnVoiceWakeChipClick(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+        OpenAiChat();
+        _aiPanel.StartDictation();
+    }
+
+    private void OnVoiceWakeChipRightClick(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+        _aiPanel.ToggleWakeEnabled();
+        UpdateVoiceWakeChip();
+    }
+
+    private void UpdateVoiceWakeChip()
+    {
+        var spec = IslandSkinEngine.Current;
+        var wakeOn = AssistantPreferences.Current.WakeEnabled;
+        var listening = _aiPanel.IsListening;
+        VoiceWakeLabel.Text = listening ? "Слушаю…" : WakeProfile.SelectedPhrase;
+        VoiceWakeDot.Fill = listening
+            ? IslandSkinEngine.Frozen(spec.Accent)
+            : wakeOn
+                ? IslandSkinEngine.Frozen(spec.IsShittimTablet || spec.IsAeroGlass ? Color.FromRgb(0x38, 0xDF, 0xC8) : spec.Gold)
+                : (Brush)FindResource("HoshinoMuted");
+    }
+
+    private void StyleLrcToggleButton()
+    {
+        var spec = IslandSkinEngine.Current;
+        var active = _lyricsPanel.CompactEnabled;
+        HomeLyricsToggle.Content = spec.IsPixelMode ? "[LRC]" : "LRC";
+        HomeLyricsToggle.Padding = spec.IsPixelMode ? new Thickness(8, 4, 8, 4) : new Thickness(10, 4, 10, 4);
+        HomeLyricsToggle.RenderTransform = spec.IsCartoonSticker ? new RotateTransform(-6) : Transform.Identity;
+        HomeLyricsToggle.Background = active
+            ? (Brush)FindResource("HoshinoAccent")
+            : spec.IsAeroGlass
+                ? IslandSkinEngine.CreateAeroConvexGlassBrush()
+                : spec.IsCartoonSticker
+                    ? IslandSkinEngine.Frozen(Color.FromRgb(0x5C, 0xE1, 0xE6))
+                    : (Brush)FindResource("HoshinoControl");
+        HomeLyricsToggle.Foreground = active && !spec.IsCartoonSticker && !spec.IsPixelMode
+            ? (Brush)FindResource("HoshinoOnAccent")
+            : spec.IsAeroGlass && !active
+                ? Brushes.White
+                : (Brush)FindResource("HoshinoText");
+        HomeLyricsToggle.ToolTip = active
+            ? "Лирика LRC включена — нажмите, чтобы выключить"
+            : "Показать синхронную лирику LRC на островке";
+    }
+
+    private void ApplySkinLayout(SkinPaletteSpec spec)
+    {
+        var cardRadius = new CornerRadius(spec.CardCornerRadius);
+        var cardBorder = new Thickness(spec.CardBorderThickness);
+        var iconBtnStyle = (Style)FindResource("IconButton");
+        var chipBtnStyle = (Style)FindResource("ChipButton");
+
+        // Ensure zero DropShadowEffect on text/vector containers so ClearType/Grayscale text stays razor-sharp
+        HomeCompanionCard.Effect = null;
+        HomePlayerCard.Effect = null;
+        FocusDockBorder.Effect = null;
+        PageTabsTrack.Effect = null;
+        VoiceWakeChip.Effect = null;
+        SettingsGearWrap.Effect = null;
+        HomeMomoCard.Effect = null;
+
+        HomeCompanionShadow.CornerRadius = cardRadius;
+        HomePlayerShadow.CornerRadius = cardRadius;
+        PageTabsTrackShadow.CornerRadius = new CornerRadius(spec.IsPixelMode ? 2 : 17);
+        VoiceWakeChipShadow.CornerRadius = new CornerRadius(spec.IsPixelMode ? 2 : 16);
+        SettingsGearShadow.CornerRadius = new CornerRadius(spec.IsPixelMode ? 2 : 16);
+        HomeMomoShadow.CornerRadius = new CornerRadius(spec.IsPixelMode ? 0 : 12);
+
+        // Left Companion Card: sunken Tamagotchi mint LCD well inside dark-plum bezel vs standard/Aero/Sticker card
+        if (spec.IsPixelMode)
+        {
+            HomeCompanionCard.CornerRadius = new CornerRadius(4);
+            HomeCompanionCard.BorderBrush = IslandSkinEngine.Frozen(Color.FromRgb(0x24, 0x1A, 0x34));
+            HomeCompanionCard.BorderThickness = new Thickness(2);
+            HomeCompanionCard.Padding = new Thickness(9);
+            HomeCompanionCard.Background = IslandSkinEngine.Frozen(Color.FromRgb(0x65, 0x54, 0x82));
+
+            HomeCompanionWell.CornerRadius = new CornerRadius(2);
+            HomeCompanionWell.Background = IslandSkinEngine.CreateMintLcdGridBrush();
+            HomeCompanionWell.BorderBrush = IslandSkinEngine.Frozen(Color.FromRgb(0x35, 0x28, 0x4A));
+            HomeCompanionWell.BorderThickness = new Thickness(2.5, 2.5, 0, 0);
+            HomeCompanionWell.Padding = new Thickness(8, 6, 8, 8);
+
+            HomeCompanionWellBevelBR.CornerRadius = new CornerRadius(2);
+            HomeCompanionWellBevelBR.BorderBrush = Brushes.White;
+            HomeCompanionWellBevelBR.BorderThickness = new Thickness(0, 0, 2, 2);
+            HomeCompanionAeroRim.BorderThickness = new Thickness(0);
+
+            HomeMomoCard.CornerRadius = new CornerRadius(0);
+            HomeMomoCard.Background = IslandSkinEngine.Frozen(Color.FromRgb(0xD5, 0xF5, 0xEC));
+            HomeMomoCard.BorderBrush = IslandSkinEngine.Frozen(Color.FromRgb(0x1A, 0x35, 0x31));
+            HomeMomoCard.BorderThickness = new Thickness(2);
+            HomeMomoCard.Padding = new Thickness(8, 6, 8, 6);
+        }
+        else
+        {
+            HomeCompanionCard.CornerRadius = cardRadius;
+            HomeCompanionCard.SetResourceReference(Border.BorderBrushProperty, "HoshinoBorder");
+            HomeCompanionCard.BorderThickness = cardBorder;
+            HomeCompanionCard.Padding = new Thickness(11, 9, 11, 9);
+            HomeCompanionCard.SetResourceReference(Border.BackgroundProperty, "HoshinoCompanionSurface");
+
+            HomeCompanionWell.CornerRadius = new CornerRadius(0);
+            HomeCompanionWell.Background = Brushes.Transparent;
+            HomeCompanionWell.BorderThickness = new Thickness(0);
+            HomeCompanionWell.Padding = new Thickness(0);
+            HomeCompanionWellBevelBR.BorderThickness = new Thickness(0);
+
+            HomeCompanionAeroRim.CornerRadius = new CornerRadius(Math.Max(0, spec.CardCornerRadius - 1));
+            HomeCompanionAeroRim.Margin = new Thickness(1);
+            HomeCompanionAeroRim.BorderThickness = new Thickness(spec.IsAeroGlass ? 1.0 : 0);
+            HomeCompanionAeroRim.BorderBrush = spec.IsAeroGlass
+                ? IslandSkinEngine.Frozen(Color.FromArgb(0x78, 0xEA, 0xF8, 0xFF))
+                : Brushes.Transparent;
+
+            HomeMomoCard.CornerRadius = new CornerRadius(12);
+            HomeMomoCard.SetResourceReference(Border.BackgroundProperty, "HoshinoControl");
+            HomeMomoCard.SetResourceReference(Border.BorderBrushProperty, "HoshinoBorder");
+            HomeMomoCard.BorderThickness = new Thickness(spec.IsCartoonSticker ? 2.2 : 1.0);
+            HomeMomoCard.Padding = new Thickness(10, 6, 10, 6);
+        }
+
+        // Right Top Player Card: sunken Winamp sage-mint LCD + physical pixel transport keys vs Aero/Sticker/Glass
+        HomePlayerCard.CornerRadius = cardRadius;
+        HomePlayerCard.BorderThickness = spec.IsPixelMode ? new Thickness(2) : cardBorder;
+        HomePlayerCard.SetResourceReference(Border.BackgroundProperty, "HoshinoPlayerSurface");
+        HomePlayerCard.SetResourceReference(Border.BorderBrushProperty, "HoshinoBorder");
+
+        if (spec.IsPixelMode)
+        {
+            HomePlayerCard.Padding = new Thickness(10, 9, 10, 9);
+            PlayerScreenBorder.CornerRadius = new CornerRadius(2);
+            PlayerScreenBorder.Background = IslandSkinEngine.CreateWinampLcdBrush();
+            PlayerScreenBorder.BorderBrush = IslandSkinEngine.Frozen(Color.FromRgb(0x4E, 0x40, 0x66));
+            PlayerScreenBorder.BorderThickness = new Thickness(2, 2, 1.5, 1.5);
+            PlayerScreenBorder.Padding = new Thickness(8, 7, 8, 8);
+            HomePlayerAeroRim.BorderThickness = new Thickness(0);
+
+            MediaSourceRow.Visibility = Visibility.Collapsed;
+            MediaTitleLarge.Foreground = IslandSkinEngine.Frozen(Color.FromRgb(0x14, 0x2D, 0x2A));
+            MediaArtistLarge.Foreground = IslandSkinEngine.Frozen(Color.FromRgb(0x2D, 0x4F, 0x4A));
+
+            TransportStack.HorizontalAlignment = HorizontalAlignment.Left;
+            foreach (var (btn, w) in new[] { (PrevButton, 46.0), (PlayPauseButton, 50.0), (NextButton, 46.0) })
+            {
+                btn.Style = chipBtnStyle;
+                btn.Width = w;
+                btn.Height = 26;
+                btn.Padding = new Thickness(0);
+                btn.Margin = new Thickness(0, 0, 5, 0);
+                btn.SetResourceReference(Control.BackgroundProperty, "HoshinoControl");
+            }
+        }
+        else
+        {
+            HomePlayerCard.Padding = new Thickness(14, 12, 14, 11);
+            PlayerScreenBorder.CornerRadius = new CornerRadius(0);
+            PlayerScreenBorder.Background = Brushes.Transparent;
+            PlayerScreenBorder.BorderThickness = new Thickness(0);
+            PlayerScreenBorder.Padding = new Thickness(0);
+
+            HomePlayerAeroRim.CornerRadius = new CornerRadius(Math.Max(0, spec.CardCornerRadius - 1));
+            HomePlayerAeroRim.Margin = new Thickness(1);
+            HomePlayerAeroRim.BorderThickness = new Thickness(spec.IsAeroGlass ? 1.0 : 0);
+            HomePlayerAeroRim.BorderBrush = spec.IsAeroGlass
+                ? IslandSkinEngine.Frozen(Color.FromArgb(0x78, 0xEA, 0xF8, 0xFF))
+                : Brushes.Transparent;
+
+            MediaSourceRow.Visibility = Visibility.Visible;
+            MediaTitleLarge.SetResourceReference(TextBlock.ForegroundProperty, "HoshinoText");
+            MediaArtistLarge.SetResourceReference(TextBlock.ForegroundProperty, "Secondary");
+
+            TransportStack.HorizontalAlignment = HorizontalAlignment.Center;
+            PrevButton.Style = iconBtnStyle;
+            PrevButton.Width = 36;
+            PrevButton.Height = 30;
+            PrevButton.Margin = new Thickness(0);
+            PrevButton.Background = Brushes.Transparent;
+            PrevButton.BorderThickness = new Thickness(0);
+
+            NextButton.Style = iconBtnStyle;
+            NextButton.Width = 36;
+            NextButton.Height = 30;
+            NextButton.Margin = new Thickness(0);
+            NextButton.Background = Brushes.Transparent;
+            NextButton.BorderThickness = new Thickness(0);
+
+            PlayPauseButton.Style = spec.IsAeroGlass || spec.IsCartoonSticker ? chipBtnStyle : iconBtnStyle;
+            PlayPauseButton.Width = spec.IsAeroGlass || spec.IsCartoonSticker ? 36 : 44;
+            PlayPauseButton.Height = spec.IsAeroGlass || spec.IsCartoonSticker ? 34 : 32;
+            PlayPauseButton.Padding = new Thickness(0);
+            PlayPauseButton.Margin = new Thickness(8, 0, 8, 0);
+            PlayPauseButton.Background = spec.IsAeroGlass
+                ? IslandSkinEngine.CreateAeroConvexGlassBrush(true)
+                : spec.IsCartoonSticker
+                    ? IslandSkinEngine.Frozen(Color.FromRgb(0xFF, 0xB5, 0xD0))
+                    : Brushes.Transparent;
+        }
+
+        // Skin-specific player progress bar & OSD bar (discrete LCD cubes / cylindrical 3D gel / candy-striped ink tube)
+        if (spec.IsPixelMode)
+        {
+            ProgressTrackBorder.Height = 9;
+            ProgressTrackBorder.CornerRadius = new CornerRadius(0);
+            ProgressTrackBorder.BorderThickness = new Thickness(0);
+            ProgressFill.CornerRadius = new CornerRadius(0);
+            ProgressThumb.Visibility = Visibility.Collapsed;
+
+            OsdTrackBorder.Height = 9;
+            OsdTrackBorder.CornerRadius = new CornerRadius(0);
+            OsdTrackBorder.BorderThickness = new Thickness(0);
+            OsdFill.CornerRadius = new CornerRadius(0);
+        }
+        else if (spec.IsAeroGlass)
+        {
+            ProgressTrackBorder.Height = 9;
+            ProgressTrackBorder.CornerRadius = new CornerRadius(4.5);
+            ProgressTrackBorder.BorderThickness = new Thickness(1);
+            ProgressTrackBorder.BorderBrush = IslandSkinEngine.Frozen(Color.FromArgb(0xAA, 0xEE, 0xFA, 0xFF));
+            ProgressFill.CornerRadius = new CornerRadius(4);
+
+            ProgressThumb.Width = 8;
+            ProgressThumb.Height = 15;
+            ProgressThumb.CornerRadius = new CornerRadius(3.5);
+            ProgressThumb.Background = IslandSkinEngine.CreateAeroConvexGlassBrush(true);
+            ProgressThumb.BorderBrush = IslandSkinEngine.Frozen(Color.FromArgb(0xCC, 0x08, 0x2A, 0x4C));
+            ProgressThumb.BorderThickness = new Thickness(1);
+
+            OsdTrackBorder.Height = 10;
+            OsdTrackBorder.CornerRadius = new CornerRadius(5);
+            OsdTrackBorder.BorderThickness = new Thickness(1);
+            OsdTrackBorder.BorderBrush = IslandSkinEngine.Frozen(Color.FromArgb(0xAA, 0xEE, 0xFA, 0xFF));
+            OsdFill.CornerRadius = new CornerRadius(4);
+        }
+        else if (spec.IsCartoonSticker)
+        {
+            var ink = IslandSkinEngine.Frozen(Color.FromRgb(0x2A, 0x1E, 0x2E));
+            ProgressTrackBorder.Height = 10;
+            ProgressTrackBorder.CornerRadius = new CornerRadius(5);
+            ProgressTrackBorder.BorderThickness = new Thickness(2);
+            ProgressTrackBorder.BorderBrush = ink;
+            ProgressFill.CornerRadius = new CornerRadius(3.5);
+
+            ProgressThumb.Width = 14;
+            ProgressThumb.Height = 14;
+            ProgressThumb.CornerRadius = new CornerRadius(7);
+            ProgressThumb.Background = IslandSkinEngine.Frozen(Color.FromRgb(0xFF, 0xE2, 0xEE));
+            ProgressThumb.BorderBrush = ink;
+            ProgressThumb.BorderThickness = new Thickness(2.2);
+
+            OsdTrackBorder.Height = 12;
+            OsdTrackBorder.CornerRadius = new CornerRadius(6);
+            OsdTrackBorder.BorderThickness = new Thickness(2.2);
+            OsdTrackBorder.BorderBrush = ink;
+            OsdFill.CornerRadius = new CornerRadius(4);
+        }
+        else
+        {
+            ProgressTrackBorder.Height = 6.5;
+            ProgressTrackBorder.CornerRadius = new CornerRadius(3.25);
+            ProgressTrackBorder.BorderThickness = new Thickness(0);
+            ProgressFill.CornerRadius = new CornerRadius(3.25);
+
+            ProgressThumb.Width = 11;
+            ProgressThumb.Height = 11;
+            ProgressThumb.CornerRadius = new CornerRadius(5.5);
+            ProgressThumb.Background = spec.IsShittimTablet
+                ? IslandSkinEngine.Frozen(Color.FromRgb(0x9C, 0xA8, 0xF8))
+                : IslandSkinEngine.Frozen(Color.FromRgb(0xCC, 0xBE, 0xDC));
+            ProgressThumb.BorderBrush = spec.IsShittimTablet
+                ? Brushes.White
+                : IslandSkinEngine.Frozen(spec.Border);
+            ProgressThumb.BorderThickness = new Thickness(1.2);
+
+            OsdTrackBorder.Height = 10;
+            OsdTrackBorder.CornerRadius = new CornerRadius(5);
+            OsdTrackBorder.BorderThickness = new Thickness(spec.IsShittimTablet ? 0 : 1);
+            OsdTrackBorder.BorderBrush = spec.IsShittimTablet
+                ? Brushes.Transparent
+                : IslandSkinEngine.CreateRimBrush(spec);
+            OsdFill.CornerRadius = new CornerRadius(spec.IsShittimTablet ? 5 : 4);
+        }
+
+        // Integrated Edge-to-Edge Bottom Focus Strip (1:1 with all 5 expanded design renders)
+        if (spec.IsPixelMode)
+        {
+            FocusDockBorder.CornerRadius = new CornerRadius(0);
+            FocusDockBorder.BorderThickness = new Thickness(0);
+            FocusDockBorder.Background = Brushes.Transparent;
+            FocusDockBorder.Padding = new Thickness(0);
+            FocusDockBorder.Margin = new Thickness(_settings.ShowHoshino ? 254 : 0, 2, 0, -2);
+        }
+        else if (spec.IsCartoonSticker)
+        {
+            FocusDockBorder.CornerRadius = new CornerRadius(0);
+            FocusDockBorder.BorderBrush = IslandSkinEngine.Frozen(Color.FromRgb(0x2A, 0x1E, 0x2E));
+            FocusDockBorder.BorderThickness = new Thickness(0, 2.4, 0, 0);
+            FocusDockBorder.Background = IslandSkinEngine.Frozen(Color.FromRgb(0xFF, 0xF3, 0xDC));
+            FocusDockBorder.Padding = new Thickness(18, 9, 22, 13);
+            FocusDockBorder.Margin = new Thickness(-18, 2, -22, -16);
+        }
+        else
+        {
+            FocusDockBorder.CornerRadius = new CornerRadius(0);
+            FocusDockBorder.BorderBrush = spec.IsAeroGlass
+                ? IslandSkinEngine.Frozen(Color.FromArgb(0x66, 0xEA, 0xF8, 0xFF))
+                : spec.IsShittimTablet
+                    ? IslandSkinEngine.Frozen(Color.FromArgb(0xAA, 0xBE, 0xDC, 0xF6))
+                    : (Brush)FindResource("HoshinoDivider");
+            FocusDockBorder.BorderThickness = new Thickness(0, 1.1, 0, 0);
+            FocusDockBorder.Background = spec.IsAeroGlass
+                ? IslandSkinEngine.Frozen(Color.FromArgb(0x24, 0x05, 0x1E, 0x38))
+                : spec.IsShittimTablet
+                    ? IslandSkinEngine.Frozen(Color.FromArgb(0x55, 0xFF, 0xFF, 0xFF))
+                    : IslandSkinEngine.Frozen(Color.FromArgb(0x24, 0x00, 0x00, 0x00));
+            FocusDockBorder.Padding = new Thickness(18, 9, 18, 13);
+            FocusDockBorder.Margin = new Thickness(-18, 2, -18, -14);
+        }
+
+        PageTabsTrack.CornerRadius = new CornerRadius(spec.IsPixelMode ? 2 : 17);
+        PageTabsTrack.BorderThickness = cardBorder;
+
+        VoiceWakeChip.CornerRadius = new CornerRadius(spec.IsPixelMode ? 2 : 16);
+        VoiceWakeChip.BorderThickness = spec.IsPixelMode ? new Thickness(1.6) : cardBorder;
+        VoiceWakeChip.Background = spec.IsAeroGlass
+            ? IslandSkinEngine.CreateAeroConvexGlassBrush()
+            : spec.IsPixelMode
+                ? (Brush)FindResource("HoshinoControl")
+                : (Brush)FindResource("HoshinoSurface");
+
+        if (spec.IsPixelMode)
+        {
+            SettingsGearWrap.Background = Brushes.Transparent;
+            SettingsGearWrap.BorderThickness = new Thickness(0);
+            SettingsGearButton.Style = chipBtnStyle;
+            SettingsGearButton.Width = 30;
+            SettingsGearButton.Height = 28;
+            SettingsGearButton.Padding = new Thickness(0);
+            SettingsGearButton.Margin = new Thickness(0);
+            SettingsGearButton.SetResourceReference(Control.BackgroundProperty, "HoshinoControl");
+        }
+        else
+        {
+            SettingsGearWrap.CornerRadius = new CornerRadius(16);
+            SettingsGearWrap.BorderThickness = cardBorder;
+            SettingsGearWrap.Background = spec.IsAeroGlass
+                ? IslandSkinEngine.CreateAeroConvexGlassBrush()
+                : (Brush)FindResource("HoshinoSurface");
+            SettingsGearButton.Style = iconBtnStyle;
+            SettingsGearButton.Width = 30;
+            SettingsGearButton.Height = 30;
+            SettingsGearButton.Margin = new Thickness(0);
+            SettingsGearButton.Background = Brushes.Transparent;
+        }
+
+        // MomoTalk / Seamless Comic Bubble / Tamagotchi RPG Dialogue Box
+        ComicBubbleTail.Visibility = spec.IsCartoonSticker ? Visibility.Visible : Visibility.Collapsed;
+        HomeMomoBar.Visibility = spec.IsPixelMode ? Visibility.Collapsed : Visibility.Visible;
+        PixelPhraseArrow.Visibility = spec.IsPixelMode ? Visibility.Visible : Visibility.Collapsed;
+
+        // Tamagotchi top status icon strip
+        if (spec.IsPixelMode)
+        {
+            TamagotchiStatusHost.Content = IslandSkinEngine.CreateTamagotchiStatusStrip(
+                HoshinoAtmosphere.IsDrowsy(DateTime.Now),
+                _media.Current?.IsPlaying == true,
+                _timer.IsActive);
+            TamagotchiStatusHost.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            TamagotchiStatusHost.Visibility = Visibility.Collapsed;
+        }
+
+        // Crisp Eye of Horus backdrop behind Hoshino (expanded Home & VoiceFocus)
+        HomeHorusBackdropHost.Content = HoshinoAccessories.CreateEyeOfHorusBackdrop(spec, includeRadarArcs: false);
+        VoiceFocusHorusHost.Content = HoshinoAccessories.CreateEyeOfHorusBackdrop(spec, includeRadarArcs: true);
+
+        // Vector Focus diamonds & Clock diamond separator
+        FocusDiamondHost.Content = IslandChromeRenderer.CreateFocusDiamondIcon(spec);
+        FocusActiveDiamondHost.Content = IslandChromeRenderer.CreateFocusDiamondIcon(spec);
+        CompactTimerDiamondHost.Content = IslandChromeRenderer.CreateFocusDiamondIcon(spec);
+        ClockDiamondHost.Content = IslandChromeRenderer.CreateClockDiamondSeparator(spec);
+
+        // Compact LRC badge styling (tilted sticker in Chibi Pop, [LRC] button in Pixel Tamagotchi)
+        CompactLrcText.Text = spec.IsPixelMode ? "[LRC]" : "LRC";
+        CompactLrcBadge.CornerRadius = new CornerRadius(spec.IsPixelMode ? 2 : 8);
+        CompactLrcBadge.BorderThickness = new Thickness(spec.IsCartoonSticker ? 1.8 : spec.IsPixelMode ? 1.6 : 1.0);
+        CompactLrcBadge.RenderTransform = spec.IsCartoonSticker ? new RotateTransform(-7) : Transform.Identity;
+        CompactLrcBadge.Background = spec.IsCartoonSticker
+            ? IslandSkinEngine.Frozen(Color.FromRgb(0x5C, 0xE1, 0xE6))
+            : spec.IsPixelMode
+                ? (Brush)FindResource("HoshinoControl")
+                : spec.IsAeroGlass
+                    ? IslandSkinEngine.CreateAeroConvexGlassBrush()
+                    : (Brush)FindResource("HoshinoSecondaryAccent");
+        CompactLrcText.Foreground = spec.IsPixelMode || spec.IsCartoonSticker
+            ? (Brush)FindResource("HoshinoText")
+            : spec.IsAeroGlass
+                ? Brushes.White
+                : (Brush)FindResource("HoshinoOnAccent");
+
+        // Style preset chips (Aero convex glass / Shittim active cyan 25m / Pixel color-coded raised keys / ChibiPop yellow 25m)
+        foreach (var child in TimerPresetButtons.Children.OfType<Button>())
+        {
+            var is25 = Equals(child.Tag, "25");
+            var isShort = Equals(child.Tag, "5") || Equals(child.Tag, "15");
+            child.Background = spec.IsAeroGlass
+                ? IslandSkinEngine.CreateAeroConvexGlassBrush(is25)
+                : spec.IsShittimTablet && is25
+                    ? IslandSkinEngine.Frozen(Color.FromRgb(0x29, 0xB6, 0xF6))
+                    : spec.IsPixelMode
+                        ? is25
+                            ? IslandSkinEngine.Frozen(Color.FromRgb(0xF2, 0xB1, 0xD0))
+                            : isShort
+                                ? IslandSkinEngine.Frozen(Color.FromRgb(0xF5, 0xE4, 0x9C))
+                                : (Brush)FindResource("HoshinoControl")
+                        : spec.IsCartoonSticker && is25
+                            ? IslandSkinEngine.Frozen(spec.Gold)
+                            : (Brush)FindResource("HoshinoControl");
+            child.Foreground = spec.IsShittimTablet && is25
+                ? Brushes.White
+                : spec.IsAeroGlass
+                    ? Brushes.White
+                    : (Brush)FindResource("HoshinoText");
+        }
+
+        if (_media.Current is { } activeMedia)
+        {
+            var title = string.IsNullOrWhiteSpace(activeMedia.Title) ? "Без названия" : activeMedia.Title;
+            MediaTitleLarge.Text = spec.IsPixelMode && !title.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase) ? $"{title}.mp3" : title;
+            MediaArtistLarge.Text = spec.IsPixelMode
+                ? $"{(string.IsNullOrEmpty(activeMedia.Artist) ? "Track" : activeMedia.Artist)} · 128kbps"
+                : string.IsNullOrEmpty(activeMedia.Album) ? activeMedia.Artist : $"{activeMedia.Artist} — {activeMedia.Album}";
+            UpdateProgress();
+        }
+
+        StyleLrcToggleButton();
+        _homeTasks.ApplySkin();
+        RebuildPixelFocusDock();
+        _chromeOverlayKey = null;
+    }
+
+    private TextBlock? _pixelTimerText;
+
+    private void RebuildPixelFocusDock()
+    {
+        if (IslandSkinEngine.Current.IsPixelMode)
+        {
+            (PixelFocusHost.Content, _pixelTimerText) = IslandChromeRenderer.CreatePixelFocusDock(_timer);
+            PixelFocusHost.Visibility = Visibility.Visible;
+            HomeTop.Margin = new Thickness(0);
+            FocusDockBorder.Visibility = _stopwatch.IsActive ? Visibility.Visible : Visibility.Collapsed;
+        }
+        else
+        {
+            PixelFocusHost.Visibility = Visibility.Collapsed;
+            PixelFocusHost.Content = null;
+            _pixelTimerText = null;
+            HomeTop.Margin = new Thickness(0, 0, 0, 8);
+            FocusDockBorder.Visibility = Visibility.Visible;
+        }
+    }
     private uint? _lastRenderedNotificationId;
     internal object AccessReport() => new
     {
@@ -921,7 +1653,8 @@ public partial class MainWindow : Window
     };
     private readonly LyricsPanel _lyricsPanel;
     private readonly DispatcherTimer _compactLyricsTimer = new() { Interval = TimeSpan.FromMilliseconds(150) };
-    private bool ShowCompactCompanion => !_voiceFocus && !_state.IsExpanded && _settings.ShowHoshino && _state.Transient is null && !_lyricsPanel.CompactEnabled;
+    private bool ShowingAquarium => !_voiceFocus && !_state.IsExpanded && !_lyricsPanel.CompactEnabled && _state.Transient is null && _state.CurrentView == IslandView.Clock && _settings.AbydosAquarium;
+    private bool ShowCompactCompanion => !_voiceFocus && !_state.IsExpanded && _settings.ShowHoshino && _state.Transient is null && !_lyricsPanel.CompactEnabled && !ShowingAquarium;
     private bool ShowingCompactLyrics => !_state.IsExpanded && _lyricsPanel.CompactEnabled && _state.Transient is null;
     private Artwork? _compactArtwork;
 
@@ -935,16 +1668,43 @@ public partial class MainWindow : Window
 
     private void UpdateCompactLyric()
     {
+        var showHoshino = _settings.ShowHoshino;
+        LyricsHoshinoHost.Visibility = showHoshino ? Visibility.Visible : Visibility.Collapsed;
+        CompactLyricArt.Visibility = showHoshino ? Visibility.Collapsed : Visibility.Visible;
+
         LyricsView.Width = Math.Clamp(_settings.CompactLyricWidth, 300, 620);
         CompactLyric.FontSize = Math.Clamp(_settings.LyricFontSize, 12, 22);
         CompactLyric.LineHeight = CompactLyric.FontSize * 1.5;
         CompactLyric.MaxHeight = CompactLyric.LineHeight * (_settings.TwoLineLyrics ? 2 : 1);
         CompactLyric.TextAlignment = _settings.CenterLyrics ? TextAlignment.Center : TextAlignment.Left;
-        CompactLyric.Text = _lyricsPanel.CompactText;
-        CompactLyric.ToolTip = _lyricsPanel.CompactText;
-        CompactLyric.Measure(new Size(LyricsView.Width - 50, double.PositiveInfinity));
-        LyricsView.Height = Math.Clamp(CompactLyric.DesiredSize.Height, 42, 84);
-        CompactLyric.BeginAnimation(OpacityProperty, new DoubleAnimation(.35, 1, TimeSpan.FromMilliseconds(_settings.ReduceMotion ? 0 : 160)));
+
+        var raw = _lyricsPanel.CompactText ?? "";
+        CompactLyric.Inlines.Clear();
+        if (raw.Length > 0)
+        {
+            var words = raw.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var spec = IslandSkinEngine.Current;
+            var highlightPink = IslandSkinEngine.Frozen(spec.IsShittimTablet ? Color.FromRgb(0xEC, 0x62, 0x98) : spec.Accent);
+            var highlightSky = IslandSkinEngine.Frozen(spec.IsShittimTablet ? Color.FromRgb(0x1D, 0x8F, 0xC9) : spec.SecondaryAccent);
+            var normalText = (Brush)FindResource("HoshinoText");
+
+            for (var i = 0; i < words.Length; i++)
+            {
+                if (i > 0) CompactLyric.Inlines.Add(new System.Windows.Documents.Run(" "));
+                var w = words[i];
+                Brush fg = normalText;
+                if (words.Length >= 3)
+                {
+                    if (i >= 1 && i <= Math.Max(1, words.Length / 2)) fg = highlightPink;
+                    else if (i == words.Length - 1) fg = highlightSky;
+                }
+                CompactLyric.Inlines.Add(new System.Windows.Documents.Run(w) { Foreground = fg });
+            }
+        }
+        CompactLyric.ToolTip = raw;
+        CompactLyric.Measure(new Size(Math.Max(120, LyricsView.Width - 110), double.PositiveInfinity));
+        LyricsView.Height = Math.Clamp(CompactLyric.DesiredSize.Height + 16, 44, 84);
+        CompactLyric.BeginAnimation(OpacityProperty, new DoubleAnimation(.45, 1, TimeSpan.FromMilliseconds(_settings.ReduceMotion ? 0 : 150)));
         if (ShowingCompactLyrics) Render();
     }
 
@@ -980,7 +1740,7 @@ public partial class MainWindow : Window
     {
         _gameFullscreen=fullscreen;var hide=fullscreen&&!_voiceFocus&&!_voiceChatOpen;
         if(hide==_gameSuppressed){if(hide){_clockTimer.Stop();_glassTimer.Stop();_compactLyricsTimer.Stop();SetEqualizerRunning(false);}return;}_gameSuppressed=hide;
-        _aiPanel.SetLowPower(hide);_lyricsPanel.SetSuspended(hide);
+        _aiPanel.SetLowPower(hide);_lyricsPanel.SetSuspended(hide);_compactHoshino.SetSuspended(hide);_homeHoshino.SetSuspended(hide);_lyricsHoshino.SetSuspended(hide);_voiceHoshino.SetSuspended(hide);_aquarium.SetSuspended(hide);_mediaArtDecorator.SetSuspended(hide);_weatherRim.SetSuspended(hide);
         if(hide){
             EndTyping(false);_hoverTimer.Stop();_leavePoll.Stop();_progressTimer.Stop();_clockTimer.Stop();_compactLyricsTimer.Stop();_glassTimer.Stop();_shadowRestore?.Stop();
             SetEqualizerRunning(false);_meter.Dispose();_capture.Dispose();_gpuBlur?.Dispose();_gpuBlur=null;_gpuActive=false;GlassImage.Source=null;_glassBitmap=null;
@@ -1071,15 +1831,15 @@ public partial class MainWindow : Window
 
     private static string PageTitle(ExpandedPage page) => page switch
     {
-        ExpandedPage.Ai => "Хошино",
-        ExpandedPage.Notifications => "Notifications",
-        ExpandedPage.Calendar => "Calendar",
-        ExpandedPage.Todo => "To-Do",
-        ExpandedPage.Notes => "Notes",
-        ExpandedPage.Shelf => "Shelf",
-        ExpandedPage.Weather => "Weather",
-        ExpandedPage.Apps => "Apps",
-        _ => "Home",
+        ExpandedPage.Ai => "Чат с Хошино",
+        ExpandedPage.Notifications => "Уведомления",
+        ExpandedPage.Calendar => "Календарь и дневник",
+        ExpandedPage.Todo => "Задачи",
+        ExpandedPage.Notes => "Заметки",
+        ExpandedPage.Shelf => "Полка файлов",
+        ExpandedPage.Weather => "Погода",
+        ExpandedPage.Apps => "Приложения",
+        _ => "Главная",
     };
 
     /// <summary>Only the current page (and one sliding out) is visible; the rest are collapsed.</summary>
@@ -1093,78 +1853,123 @@ public partial class MainWindow : Window
         BuildPageNav();
     }
 
-    /// <summary>Tabs (labels) or dots, per the setting; rebuilt only when the pages or selection change.</summary>
+    /// <summary>Icon-only Bento capsule tabs, physical Pixel Tamagotchi keys, or dots; preserves drag-reorder and context menu.</summary>
     private void BuildPageNav()
     {
         var pages = AvailablePages();
         var dots = _settings.PageNavigation == PageNavigation.Dots;
-        var key = $"{dots}|{_page}|{string.Join(',', pages)}";
+        var spec = IslandSkinEngine.Current;
+        var key = $"{dots}|{_page}|{spec.Skin}|{spec.PresetId}|{string.Join(',', pages)}";
         if (key == _pageNavKey) return;
         _pageNavKey = key;
 
         PageTabs.Children.Clear();
-        // Dots sit centered; the nav row leaves room on the right for the gear, so balance it on the left.
+        PageTabsTrackShadow.Visibility = spec.IsCartoonSticker && !dots ? Visibility.Visible : Visibility.Collapsed;
+        PageTabsTrack.Background = dots || spec.IsPixelMode ? Brushes.Transparent : (Brush)FindResource("HoshinoSurface");
+        PageTabsTrack.BorderThickness = dots || spec.IsPixelMode ? new Thickness(0) : new Thickness(spec.CardBorderThickness);
+        PageTabsTrack.Padding = dots || spec.IsPixelMode ? new Thickness(0) : new Thickness(4, 3, 4, 3);
         PageTabs.HorizontalAlignment = dots ? HorizontalAlignment.Center : HorizontalAlignment.Left;
-        PageTabs.Margin = dots ? new Thickness(34, 0, 0, 0) : new Thickness(-8, 0, 0, 0);
-        var secondary = (Brush)FindResource("Secondary");
+        PageTabs.Margin = new Thickness(0);
+
+        var iconStyle = (Style)FindResource("IconButton");
+        var chipStyle = (Style)FindResource("ChipButton");
+
         foreach (var page in pages)
         {
             var selected = page == _page;
-            // Tabs: an icon each, plus the label on the selected one (seven labels don't fit the width).
+            var usePixelKey = !dots && spec.IsPixelMode;
             var button = new Button
             {
-                Style = (Style)FindResource("IconButton"),
+                Style = usePixelKey ? chipStyle : iconStyle,
                 ToolTip = PageTitle(page),
-                Padding = dots ? new Thickness(5, 6, 5, 6) : new Thickness(7, 3, selected ? 9 : 7, 3),
+                Width = dots ? 18 : usePixelKey ? 30 : 32,
+                Height = dots ? 18 : usePixelKey ? 26 : 28,
+                Padding = new Thickness(0),
+                Margin = new Thickness(dots ? 1 : usePixelKey ? 0 : 1.5, 0, dots ? 1 : usePixelKey ? 3 : 1.5, 0),
                 Content = dots
                     ? new Ellipse
                     {
                         Width = 6,
                         Height = 6,
-                        Fill = selected ? Brushes.White : new SolidColorBrush(Color.FromArgb(0x55, 0xFF, 0xFF, 0xFF)),
+                        Fill = selected ? (Brush)FindResource("HoshinoAccent") : (Brush)FindResource("HoshinoMuted"),
                     }
-                    : new StackPanel
+                    : IslandChromeRenderer.CreateTabIcon(page.ToString(), selected, spec),
+            };
+
+            System.Windows.Automation.AutomationProperties.SetName(button, PageTitle(page));
+            if (!dots)
+            {
+                if (spec.IsPixelMode)
+                {
+                    button.Background = selected
+                        ? IslandSkinEngine.Frozen(Color.FromRgb(0xF5, 0xBE, 0xD8))
+                        : (Brush)FindResource("HoshinoControl");
+                }
+                else if (selected)
+                {
+                    if (spec.IsAeroGlass)
                     {
-                        Orientation = Orientation.Horizontal,
-                        Children =
-                        {
-                            new TextBlock
-                            {
-                                Style = (Style)FindResource("Glyph"),
-                                Text = PageGlyph(page),
-                                FontSize = 13,
-                                Foreground = selected ? Brushes.White : secondary,
-                            },
-                            new TextBlock
-                            {
-                                Text = PageTitle(page),
-                                FontSize = 12,
-                                FontWeight = FontWeights.SemiBold,
-                                Margin = new Thickness(6, 0, 0, 0),
-                                VerticalAlignment = VerticalAlignment.Center,
-                                Visibility = Visibility.Collapsed,
-                            },
-                        },
-                    },
-            };
-            if(!dots && page==ExpandedPage.Ai)
-                button.Content=new Image { Width=18,Height=18,Source=new System.Windows.Media.Imaging.BitmapImage(new Uri(System.IO.Path.Combine(AppContext.BaseDirectory,"Assets","Hoshino","hoshino-neutral.png"))) };
-            System.Windows.Automation.AutomationProperties.SetName(button,PageTitle(page));
-            if (!dots && selected) button.Background = new SolidColorBrush(Color.FromArgb(0x1F, 0xFF, 0xFF, 0xFF));
+                        button.Background = page == ExpandedPage.Home
+                            ? IslandSkinEngine.CreateStartOrbBrush()
+                            : IslandSkinEngine.CreateAeroConvexGlassBrush(true);
+                        button.BorderBrush = IslandSkinEngine.Frozen(Color.FromArgb(0xCC, 0xEE, 0xFA, 0xFF));
+                        button.BorderThickness = new Thickness(1);
+                    }
+                    else if (spec.IsCartoonSticker)
+                    {
+                        button.Background = IslandSkinEngine.Frozen(Color.FromRgb(0xFF, 0xB5, 0xD0));
+                        button.BorderBrush = IslandSkinEngine.Frozen(Color.FromRgb(0x2A, 0x1E, 0x2E));
+                        button.BorderThickness = new Thickness(1.8);
+                    }
+                    else
+                    {
+                        button.Background = (Brush)FindResource("HoshinoAccent");
+                    }
+                }
+            }
+
             var target = page;
-            Point dragStart=default;
-            button.PreviewMouseLeftButtonDown+=(_,e)=>dragStart=e.GetPosition(button);
-            button.PreviewMouseMove+=(_,e)=> {
-                if(e.LeftButton!=MouseButtonState.Pressed)return;
-                var point=e.GetPosition(button);if((point-dragStart).Length<8)return;
-                DragDrop.DoDragDrop(button,new DataObject("Hoshino.Navigation",target.ToString()),DragDropEffects.Move);e.Handled=true;
+            Point dragStart = default;
+            button.PreviewMouseLeftButtonDown += (_, e) => dragStart = e.GetPosition(button);
+            button.PreviewMouseMove += (_, e) =>
+            {
+                if (e.LeftButton != MouseButtonState.Pressed) return;
+                var point = e.GetPosition(button);
+                if ((point - dragStart).Length < 8) return;
+                DragDrop.DoDragDrop(button, new DataObject("Hoshino.Navigation", target.ToString()), DragDropEffects.Move);
+                e.Handled = true;
             };
-            button.AllowDrop=true;
-            button.DragOver+=(_,e)=>{e.Effects=e.Data.GetDataPresent("Hoshino.Navigation")?DragDropEffects.Move:DragDropEffects.None;e.Handled=true;};
-            button.Drop+=(_,e)=>{ if(e.Data.GetData("Hoshino.Navigation") is string name && Enum.TryParse<ExpandedPage>(name,out var source)) MoveNavigation(source,target); e.Handled=true; };
-            var menu=new ContextMenu();
-            foreach(var delta in new[]{-1,1}) { var step=delta;var item=new MenuItem{Header=step<0?"Переместить влево":"Переместить вправо"};item.Click+=(_,_)=>{var list=AvailablePages();var index=list.IndexOf(target);var next=index+step;if(next<0||next>=list.Count)return; var other=list[next]; if(step<0)MoveNavigation(target,other);else MoveNavigation(other,target);};menu.Items.Add(item); }
-            button.ContextMenu=menu;
+            button.AllowDrop = true;
+            button.DragOver += (_, e) =>
+            {
+                e.Effects = e.Data.GetDataPresent("Hoshino.Navigation") ? DragDropEffects.Move : DragDropEffects.None;
+                e.Handled = true;
+            };
+            button.Drop += (_, e) =>
+            {
+                if (e.Data.GetData("Hoshino.Navigation") is string name && Enum.TryParse<ExpandedPage>(name, out var source))
+                    MoveNavigation(source, target);
+                e.Handled = true;
+            };
+
+            var menu = new ContextMenu();
+            foreach (var delta in new[] { -1, 1 })
+            {
+                var step = delta;
+                var item = new MenuItem { Header = step < 0 ? "Переместить влево" : "Переместить вправо" };
+                item.Click += (_, _) =>
+                {
+                    var list = AvailablePages();
+                    var index = list.IndexOf(target);
+                    var next = index + step;
+                    if (next < 0 || next >= list.Count) return;
+                    var other = list[next];
+                    if (step < 0) MoveNavigation(target, other);
+                    else MoveNavigation(other, target);
+                };
+                menu.Items.Add(item);
+            }
+            button.ContextMenu = menu;
             button.Click += (_, _) => ShowPage(target, animate: true);
             PageTabs.Children.Add(button);
         }
@@ -1191,6 +1996,7 @@ public partial class MainWindow : Window
         {
             // The outgoing page keeps drawing but takes no layout space (negative bottom margin), so
             // the island sizes to the incoming page while both are on screen.
+            PageHost.ClipToBounds = true;
             _leavingPage = from;
             from.Margin = new Thickness(0, 0, 0, -from.ActualHeight);
             from.IsHitTestVisible = false;
@@ -1216,6 +2022,7 @@ public partial class MainWindow : Window
     private void FinishLeaving(FrameworkElement page)
     {
         if (page == _leavingPage) _leavingPage = null;
+        PageHost.ClipToBounds = false;
         page.BeginAnimation(OpacityProperty, null);
         page.Opacity = 1;
         page.RenderTransform = Transform.Identity;
@@ -1434,14 +2241,13 @@ public partial class MainWindow : Window
 
     private double _viewsTop = double.NaN;
 
-    /// <summary>Views sit at the pill's top edge, which moves while the shape morphs (island ↔ notch).</summary>
+    /// <summary>Views sit centered on the pill's top edge; compact companion space is reserved inside each compact view.</summary>
     private void UpdateViewMargins()
     {
         var top = PillTop;
-        var left = ShowCompactCompanion ? 44 : 0;
-        if (Math.Abs(top - _viewsTop) < 0.01 && ClockView.Margin.Left == left) return;
+        if (Math.Abs(top - _viewsTop) < 0.01) return;
         _viewsTop = top;
-        foreach (var view in _views) view.Margin = new Thickness(view == ExpandedView || view == LyricsView || view==VoiceFocusView ? 0 : left, top, 0, 0);
+        foreach (var view in _views) view.Margin = new Thickness(0, top, 0, 0);
     }
 
     private void ApplyGeometry()
@@ -1449,30 +2255,59 @@ public partial class MainWindow : Window
         var w = Math.Max(0, _width.Value);
         var h = Math.Max(0, _height.Value);
         var r = Math.Clamp(_radius.Value, 0, Math.Min(w, h) / 2);
+        var spec = IslandSkinEngine.Current;
 
         UpdateViewMargins();
-        CompactHoshinoHost.Margin = new Thickness((BaseWidth - w) / 2 + 6, PillTop + Math.Max(0, (h - 34) / 2), 0, 0);
+        var compactLeftPad = spec.IsPixelMode ? 12.0 : 11.0;
+        CompactHoshinoHost.Margin = new Thickness((BaseWidth - w) / 2 + compactLeftPad, PillTop + Math.Max(0, (h - 31) / 2), 0, 0);
         var t = NotchAmount;
-        var shape = t <= 0 ? BuildPill(w, h, r) : BuildNotch(w, h, r, t);
+        var geo = IslandChromeRenderer.BuildShapeAndRim(BaseWidth, IslandTopMargin, NotchShoulder, w, h, r, t, Roundness, spec);
+        var shape = geo.Body;
+
+        RenderOptions.SetEdgeMode(PillShape, spec.IsPixelMode ? EdgeMode.Aliased : EdgeMode.Unspecified);
+        RenderOptions.SetEdgeMode(IslandRimPath, spec.IsPixelMode ? EdgeMode.Aliased : EdgeMode.Unspecified);
         PillShape.Data = shape;
+        PillCartoonShadow.Data = shape;
+        PillCartoonShadow.Visibility = spec.IsCartoonSticker ? Visibility.Visible : Visibility.Collapsed;
         GlassSheen.Data = shape;
-        // Liquid Glass is translucent. Seal only the first two DIPs of a flush notch so wallpaper
-        // cannot shine through its junction with the bezel; the rest keeps the original material.
+        SkinClippedOverlay.Clip = shape;
+        IslandRimPath.Data = geo.Rim;
+
         NotchTopSeal.Visibility = IsNotch && PillTop < .01 ? Visibility.Visible : Visibility.Collapsed;
+        NotchTopSeal.Fill = PillShape.Fill;
         NotchTopSeal.Data = new RectangleGeometry(new Rect((BaseWidth - w) / 2 - NotchShoulder, 0, w + 2 * NotchShoulder, 2));
         NotchTopSeal.Clip = shape;
         GlassLayer.Clip = shape;
         ContentLayer.Clip = shape;
         UpdateGpuShape();
 
-        // The second-activity bubble sits just right of the pill, as tall as it; the privacy dot after it.
+        var isExpanded = _state.IsExpanded || _voiceFocus;
+        var overlayKey = FormattableString.Invariant($"{spec.Skin}|{Math.Round(w):0}|{Math.Round(h):0}|{isExpanded}|{IsNotch}|{Math.Round(t, 2):0.00}");
+        if (overlayKey != _chromeOverlayKey)
+        {
+            _chromeOverlayKey = overlayKey;
+            IslandChromeRenderer.PopulateSkinChrome(SkinClippedOverlay, SkinOuterOverlay, geo, spec, isExpanded, IsNotch);
+        }
+
+        // Perimeter Focus Timer along the collapsed island / open-top notch contour
+        var showPerimeter = _settings.PerimeterFocusTimer && _timer.IsActive && !isExpanded && !IslandHidden;
+        IslandChromeRenderer.UpdatePerimeterFocus(
+            PerimeterTimerTrack, PerimeterTimerArc, PerimeterTimerDot,
+            geo.Rim, spec, showPerimeter, _timer.RemainingRatio);
+
+        // Top-rim weather atmosphere (snow / frost / raindrops)
+        _weatherRim.Update(_weather.Current, BaseWidth, w, PillTop, IsNotch, IslandHidden);
+
+        // Second-activity bubble (~8px clean gap right of the pill)
+        const double bubbleGap = 8;
         var right = (BaseWidth + w) / 2;
         if (ActivityBubble.Visibility == Visibility.Visible)
         {
-            var size = Math.Max(26, h);
+            var size = Math.Max(34, h);
             ActivityBubble.Width = ActivityBubble.Height = size;
-            ActivityBubble.Margin = new Thickness(right + 7, PillTop + (h - size) / 2, 0, 0);
-            right += 7 + size;
+            ActivityBubble.Margin = new Thickness(right + bubbleGap, PillTop + (h - size) / 2, 0, 0);
+            RefreshActivityBubbleVisuals(size);
+            right += bubbleGap + size;
         }
         if (PrivacyDot.Visibility == Visibility.Visible)
             PrivacyDot.Margin = new Thickness(right + 7, PillTop + h / 2 - PrivacyDot.Height / 2, 0, 0);
@@ -1498,10 +2333,10 @@ public partial class MainWindow : Window
         var cameraStarted = now.CameraApps.Except(old.CameraApps).ToList();
         var micStarted = now.MicrophoneApps.Except(old.MicrophoneApps).ToList();
         if (cameraStarted.Count > 0)
-            ShowInfo(TransientPriority.Device, 340, "", "Camera in use", string.Join(", ", cameraStarted),
+            ShowInfo(TransientPriority.Device, 340, "", "Камера активна", string.Join(", ", cameraStarted),
                 glyphBrush: CameraBrush, detailBrush: CameraBrush);
         else if (micStarted.Count > 0)
-            ShowInfo(TransientPriority.Device, 340, "", "Microphone in use", string.Join(", ", micStarted),
+            ShowInfo(TransientPriority.Device, 340, "", "Микрофон активен", string.Join(", ", micStarted),
                 glyphBrush: MicrophoneBrush, detailBrush: MicrophoneBrush);
     }
 
@@ -1516,9 +2351,9 @@ public partial class MainWindow : Window
         PrivacyDot.Visibility = active && (!_state.IsExpanded||_voiceFocus) ? Visibility.Visible : Visibility.Collapsed;
         PrivacyChip.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
         PrivacyChipDot.Fill = brush;
-        var what = use.CameraInUse && use.MicrophoneInUse ? "Camera & mic"
-            : use.CameraInUse ? "Camera"
-            : "Mic";
+        var what = use.CameraInUse && use.MicrophoneInUse ? "Камера и микрофон"
+            : use.CameraInUse ? "Камера"
+            : "Микрофон";
         PrivacyChipText.Text = _aiPanel.MicrophoneActive ? (_aiPanel.IsCalibrating ? "Калибровка · микрофон" : _aiPanel.IsListening ? "Хошино · слушаю команду" : "Микрофон · "+WakeProfile.SelectedPhrase) : $"{what} · {string.Join(", ", use.CameraApps.Concat(use.MicrophoneApps).Distinct())}";
         ApplyGeometry();
     }
@@ -1588,38 +2423,25 @@ public partial class MainWindow : Window
     /// </summary>
     private void UpdateGlass()
     {
-        var wantBlur = IsGlass && IsLoaded && !_gameSuppressed && _settings.GlassBlur > 0;
+        var blurAmount = EffectiveGlassBlur;
+        var wantBlur = IsGlass && IsLoaded && !_gameSuppressed && blurAmount > 0.001;
 
-        // Auto: the GPU engine can't draw WinUI 3 windows (their thumbnails come out empty), so while
-        // one is the top window behind the island the screen-capture engine takes over.
-        var gpu = wantBlur && _settings.GlassEngine != GlassEngine.ScreenCapture
-                  && !(_settings.GlassEngine == GlassEngine.Auto && _winUiBehind)
-                  && GpuBlurVerified() && EnsureGpuBlur();
+        var gpu = wantBlur && !_winUiBehind && GpuBlurVerified() && EnsureGpuBlur();
         if (gpu != _gpuActive)
         {
             _gpuBlur?.SetVisible(gpu);
             if (gpu) KeepOnTop(force: true);
+            _themeKey = null;
         }
         _gpuActive = gpu;
         if (gpu) UpdateGpuShape();
 
-        var capture = wantBlur && !gpu && _settings.GlassEngine != GlassEngine.Gpu && !_captureUnsupported;
-        SetExcludedFromCapture(capture);
-        capture &= _excludedFromCapture;
-
-        GlassLayer.Visibility = capture ? Visibility.Visible : Visibility.Collapsed;
-        if (capture)
-        {
-            ((BlurEffect)GlassImage.Effect).Radius = Math.Clamp(_settings.GlassBlur, 0, 1) * MaxGlassBlur;
-            CaptureGlass();
-            _glassTimer.Start();
-        }
-        else
-        {
-            _glassTimer.Stop();
-            GlassImage.Source = null;
-            _glassBitmap = null;
-        }
+        // Never exclude the island from screen capture so screenshots always capture HoshiBar cleanly!
+        SetExcludedFromCapture(false);
+        GlassLayer.Visibility = Visibility.Collapsed;
+        _glassTimer.Stop();
+        GlassImage.Source = null;
+        _glassBitmap = null;
     }
 
     private void SetExcludedFromCapture(bool exclude)
@@ -1628,7 +2450,6 @@ public partial class MainWindow : Window
         if (exclude == _excludedFromCapture || hwnd == IntPtr.Zero) return;
         var ok = NativeMethods.SetWindowDisplayAffinity(hwnd,
             exclude ? NativeMethods.WDA_EXCLUDEFROMCAPTURE : NativeMethods.WDA_NONE);
-        if (exclude && !ok) _captureUnsupported = true; // older than Windows 10 2004
         _excludedFromCapture = exclude && ok;
     }
 
@@ -1840,7 +2661,7 @@ public partial class MainWindow : Window
         _gpuBlur.SetShape(
             (float)((BaseWidth - w) / 2 * f), (float)((PillTop - extra) * f),
             (float)(w * f), (float)((h + extra) * f), (float)(r * f),
-            (float)(Math.Clamp(_settings.GlassBlur, 0, 1) * MaxGlassBlur * f),
+            (float)(EffectiveGlassBlur * MaxGlassBlur * f),
             (float)_glassStrength);
     }
 
@@ -2012,7 +2833,15 @@ public partial class MainWindow : Window
     {
         var accent = ResolveAccent();
         _accent = accent;
-        var strength = MaterialStrength;
+        var spec = IslandSkinEngine.Current;
+        var rawStrength = MaterialStrength;
+        var strength = spec.DisableGlassBlur
+            ? 1.0
+            : spec.IsLight
+                ? Math.Max(0.88, rawStrength)
+                : spec.IsAeroGlass
+                    ? Math.Max(0.76, rawStrength)
+                    : rawStrength;
         var glass = IsGlass;
 
         // The blur engine has its own state (probe finishing, window loaded); always let it update.
@@ -2022,78 +2851,91 @@ public partial class MainWindow : Window
         // ApplyTheme is called on many events (media updates, window events); skip rebuilding brushes
         // and restarting animations when nothing that affects the look has changed.
         var s = _settings;
-        var key = string.Join('|', s.DesignPreset, s.DesignBackground, s.DesignText, accent, strength, s.Material, s.BackgroundTint, s.BackgroundOpacity, s.GlassTint,
-            s.GlassShine, s.OutlineWidth, s.OutlineOpacity, s.ShadowStrength, s.TextShadow, s.AccentSource,
+        var key = string.Join('|', s.IslandSkin, s.DesignPreset, s.DesignBackground, s.DesignText, accent, strength, _gpuActive, IsGhostMode, s.BackgroundTint,
+            s.OutlineWidth, s.OutlineOpacity, s.ShadowStrength, s.TextShadow, s.AccentSource,
             _media.Current?.Accent, _osdDimmed);
         if (key == _themeKey) return;
         _themeKey = key;
 
-        // Background fill
-        var tint = Math.Clamp(_settings.BackgroundTint, 0, 0.6);
-        var baseColor = accent is { } a ? ColorTools.Mix(HoshinoPalette.Background, a, tint) : HoshinoPalette.Background;
-        var materialAlpha = _settings.Material switch
-        {
-            IslandMaterial.Translucent => Math.Clamp(_settings.BackgroundOpacity, 0.15, 1),
-            IslandMaterial.LiquidGlass => Math.Clamp(_settings.GlassTint, 0, 0.9),
-            _ => 1,
-        };
-        // Never fully 0: Windows passes clicks through fully transparent pixels of a layered window.
-        baseColor.A = (byte)Math.Max(2, Math.Round(255 * materialAlpha * strength));
-        _pillBrush.BeginAnimation(SolidColorBrush.ColorProperty,
-            new ColorAnimation(baseColor, TimeSpan.FromMilliseconds(_settings.ReduceMotion ? 0 : 450)) { EasingFunction = new CubicEase() });
+        // Sync local Window.Resources brushes so every legacy consumer adapts to dark & light skins live
+        if (Resources["Secondary"] is SolidColorBrush secBrush && !secBrush.IsFrozen) secBrush.Color = spec.Muted;
+        if (Resources["ArtPlaceholder"] is SolidColorBrush artPh && !artPh.IsFrozen)
+            artPh.Color = spec.IsLight ? IslandSkinPresets.Mix(spec.Control, spec.Border, 0.35) : Color.FromRgb(0x2B, 0x26, 0x35);
+        if (Resources["Orange"] is SolidColorBrush orangeBrush && !orangeBrush.IsFrozen)
+            orangeBrush.Color = spec.IsLight ? Color.FromRgb(0xD9, 0x8A, 0x18) : spec.Gold;
+        if (Resources["Green"] is SolidColorBrush greenBrush && !greenBrush.IsFrozen)
+            greenBrush.Color = spec.Accent;
+        if (Resources["Cyan"] is SolidColorBrush cyanBrush && !cyanBrush.IsFrozen)
+            cyanBrush.Color = spec.IsLight && spec.IsShittimTablet ? Color.FromRgb(0x1D, 0x9B, 0xF0) : spec.SecondaryAccent;
 
-        // Live blur of what's behind; adaptive strength fades it toward the sharp background.
-        var shine = Math.Clamp(_settings.GlassShine, 0, 1);
-        GlassLayer.BeginAnimation(OpacityProperty, new DoubleAnimation(strength, TimeSpan.FromMilliseconds(_settings.ReduceMotion ? 0 : 450)));
-        GlassSheen.Visibility = glass ? Visibility.Visible : Visibility.Collapsed;
-        GlassSheen.Fill = CreateGlassSheen(shine);
-        GlassSheen.BeginAnimation(OpacityProperty, new DoubleAnimation(strength, TimeSpan.FromMilliseconds(_settings.ReduceMotion ? 0 : 450)));
+        // Fixed per-theme body brush: blends over live GPU Gaussian blur when _gpuActive is ready,
+        // or falls back to higher body opacity when GPU blur is inactive (e.g. Ghost Mode / Energy Saver).
+        var tint = spec.Skin == IslandSkin.HorusGlass ? Math.Clamp(_settings.BackgroundTint, 0, 0.45) : 0;
+        var effectiveStrength = Math.Max(0.84, strength);
+        var bodyAlphaScale = spec.DisableGlassBlur
+            ? 1.0
+            : _gpuActive
+                ? effectiveStrength
+                : spec.IsAeroGlass ? 0.92 : 0.95;
+        PillShape.Fill = IslandSkinEngine.CreateIslandBodyBrush(spec, accent, tint, bodyAlphaScale);
+        NotchTopSeal.Fill = PillShape.Fill;
+        GlassLayer.Visibility = Visibility.Collapsed;
+        GlassSheen.Visibility = Visibility.Collapsed;
 
-        // Text shadow wherever the background can be see-through.
-        var seeThrough = glass || _settings.Material == IslandMaterial.Translucent || strength < 1;
-        _useTextShadow = _settings.TextShadow && seeThrough;
+        // Compact LCD segment foregrounds in Pixel Tamagotchi vs normal HoshinoText
+        var compactTextBrush = spec.IsPixelMode
+            ? IslandSkinEngine.Frozen(Color.FromRgb(0x14, 0x2D, 0x2A))
+            : (Brush)FindResource("HoshinoText");
+        ClockText.Foreground = compactTextBrush;
+        ClockWeatherTemp.Foreground = compactTextBrush;
+        MediaTitleSmall.Foreground = compactTextBrush;
+        CompactLyric.Foreground = compactTextBrush;
+        TimerTextSmall.Foreground = compactTextBrush;
+        TimerTextLarge.Foreground = (Brush)FindResource("HoshinoText");
+        OsdPercent.Foreground = compactTextBrush;
+
+        // Crisp subtle shadow on Aero white text; disabled on light skins to avoid muddy gray halos
+        _useTextShadow = spec.IsAeroGlass;
         RestoreTextShadow();
 
-        // Outline: glass gets the specular rim; other materials an optional flat outline.
-        var outline = Math.Clamp(_settings.OutlineWidth, 0, 4);
-        if (glass && (shine > 0 || outline > 0))
+        // Keep PillShape.Stroke empty so Notch never paints a line across y = 0; IslandRimPath draws open-top Notch & heterochromatic Island contours!
+        PillShape.Stroke = null;
+        PillShape.StrokeThickness = 0;
+
+        var extraOutline = Math.Clamp(_settings.OutlineWidth, 0, 4);
+        IslandRimPath.Stroke = IslandSkinEngine.CreateRimBrush(spec);
+        IslandRimPath.StrokeThickness = Math.Max(spec.RimThickness, extraOutline);
+        IslandRimPath.StrokeDashArray = IsGhostMode ? new DoubleCollection { 4, 3 } : null;
+        IslandRimPath.Opacity = spec.IsCartoonSticker || spec.IsPixelMode ? 1.0 : Math.Max(0.88, effectiveStrength);
+
+        // Shadow: Chibi Pop uses pure vector PillCartoonShadow Path; other skins get soft drop shadow
+        if (spec.IsCartoonSticker)
         {
-            PillShape.Stroke = CreateGlassRim(Math.Max(shine, outline > 0 ? 0.3 : 0) * Math.Max(strength, 0.35));
-            PillShape.StrokeThickness = Math.Max(1, outline);
-        }
-        else if (outline > 0)
-        {
-            var c = accent ?? Colors.White;
-            c.A = (byte)Math.Round(255 * Math.Clamp(_settings.OutlineOpacity, 0, 1) * Math.Max(strength, 0.35));
-            var stroke = new SolidColorBrush(c);
-            stroke.Freeze();
-            PillShape.Stroke = stroke;
-            PillShape.StrokeThickness = outline;
+            PillShape.Effect = null;
         }
         else
         {
-            PillShape.Stroke = null;
-            PillShape.StrokeThickness = 0;
+            var shadow = Math.Max(spec.IsLight ? 0.18 : 0.22, Math.Clamp(_settings.ShadowStrength, 0, 1)) * effectiveStrength;
+            _shadow.Opacity = shadow;
+            PillShape.Effect = shadow > 0.01 ? _shadow : null;
         }
 
-        // Shadow
-        var shadow = Math.Clamp(_settings.ShadowStrength, 0, 1) * strength;
-        _shadow.Opacity = shadow;
-        PillShape.Effect = shadow > 0.01 ? _shadow : null;
+        // Progress & OSD fills use skin-aware HoshinoProgressBrush
+        var progressBrush = (Brush)Application.Current.Resources["HoshinoProgressBrush"];
+        ProgressFill.Background = progressBrush;
+        if (!_osdDimmed) OsdFill.Background = progressBrush;
 
-        // Accents
-        var levelBrush = accent is { } la ? new SolidColorBrush(la) : Brushes.White;
-        levelBrush.Freeze();
-        ProgressFill.Background = levelBrush;
-        if (!_osdDimmed) OsdFill.Background = levelBrush;
-
-        var mediaColor = _settings.AccentSource == AccentSource.Monochrome
-            ? Colors.White
-            : accent ?? _media.Current?.Accent ?? DefaultMediaAccent;
-        var mediaBrush = new SolidColorBrush(mediaColor);
-        mediaBrush.Freeze();
-        foreach (var bar in Equalizer.Children.OfType<Shape>()) bar.Fill = mediaBrush;
-        MediaAppDot.Fill = mediaBrush;
+        // 4-band heterochromatic / stepped pixel equalizer bars
+        var eqBrushes = IslandSkinEngine.CreateEqualizerBrushes(spec);
+        var barIdx = 0;
+        foreach (var bar in Equalizer.Children.OfType<Rectangle>())
+        {
+            bar.Fill = eqBrushes[barIdx % eqBrushes.Length];
+            bar.RadiusX = bar.RadiusY = spec.IsPixelMode ? 0 : 1.5;
+            bar.Width = spec.IsPixelMode ? 4.5 : 3.5;
+            barIdx++;
+        }
+        MediaAppDot.Fill = eqBrushes[1];
     }
 
     // ---------------------------------------------------------------- hover / click
@@ -2203,8 +3045,8 @@ public partial class MainWindow : Window
     /// </summary>
     private void OnLeavePoll(object? sender, EventArgs e)
     {
-        // Typing in a note: stay open wherever the mouse goes, until the user clicks elsewhere or presses Esc.
-        if (_typing || _page == ExpandedPage.Ai || IsCursorOverPill())
+        // Typing in a note or scanning an open QR bridge: stay open wherever the mouse goes.
+        if (_typing || _page == ExpandedPage.Ai || (_page == ExpandedPage.Shelf && _qrPanel.IsOpen) || IsCursorOverPill())
         {
             _msOutside = 0;
             return;
@@ -2255,7 +3097,7 @@ public partial class MainWindow : Window
                 Width = 30,
                 Height = 30,
                 VerticalAlignment = VerticalAlignment.Top,
-                ToolTip = item.Done ? "Mark as not done" : "Mark as done",
+                ToolTip = item.Done ? "Вернуть в работу" : "Отметить выполненным",
                 Content = item.Done
                     ? new Grid
                     {
@@ -2278,7 +3120,7 @@ public partial class MainWindow : Window
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(6, 6, 6, 6),
                 VerticalAlignment = VerticalAlignment.Center,
-                Foreground = item.Done ? secondary : Brushes.White,
+                Foreground = item.Done ? secondary : (Brush)FindResource("HoshinoText"),
                 TextDecorations = item.Done ? TextDecorations.Strikethrough : null,
             };
             Grid.SetColumn(text, 1);
@@ -2292,7 +3134,7 @@ public partial class MainWindow : Window
                 Height = 28,
                 Opacity = 0,
                 VerticalAlignment = VerticalAlignment.Top,
-                ToolTip = "Delete",
+                ToolTip = "Удалить задачу",
                 Content = new TextBlock { Style = (Style)FindResource("Glyph"), Text = "", FontSize = 10, Foreground = secondary },
             };
             delete.Click += (_, _) => _notes.Remove(id);
@@ -2307,7 +3149,7 @@ public partial class MainWindow : Window
         var finished = _notes.DoneCount;
         TodoEmpty.Visibility = open == 0 && finished == 0 ? Visibility.Visible : Visibility.Collapsed;
         TodoFooter.Visibility = open + finished > 0 ? Visibility.Visible : Visibility.Collapsed;
-        TodoCount.Text = open == 0 ? "All done" : finished == 0 ? $"{open} to do" : $"{open} to do · {finished} done";
+        TodoCount.Text = open == 0 ? "Всё выполнено" : finished == 0 ? $"Осталось: {open}" : $"Осталось: {open} · Готово: {finished}";
         TodoClearDone.Visibility = finished > 0 ? Visibility.Visible : Visibility.Collapsed;
         if (IsLoaded && _state.IsExpanded && _page == ExpandedPage.Todo) Render(); // height may change
     }
@@ -2345,7 +3187,7 @@ public partial class MainWindow : Window
     {
         var length = NoteBox.Text.Length;
         NotePlaceholder.Visibility = length == 0 ? Visibility.Visible : Visibility.Collapsed;
-        NoteStatus.Text = length == 0 ? "Saved on this PC as you type" : $"{length:N0} characters · saved on this PC";
+        NoteStatus.Text = length == 0 ? "Сохраняется автоматически на этом ПК" : $"{length:N0} симв. · сохранено локально";
         ResetNoteClear();
     }
 
@@ -2361,10 +3203,10 @@ public partial class MainWindow : Window
         if (NoteBox.Text.Length == 0) return;
         try { Clipboard.SetText(NoteBox.Text); }
         catch (Exception) { return; /* clipboard busy */ }
-        ShowInfo(TransientPriority.Clipboard, 300, "", "Note copied", null, seconds: 1.5);
+        ShowInfo(TransientPriority.Clipboard, 300, "", "Заметка скопирована", null, seconds: 1.5);
     }
 
-    // Clearing asks for a second click ("Click again to clear") within 3 seconds.
+    // Clearing asks for a second click within 3 seconds.
     private DispatcherTimer? _noteClearArm;
 
     private void OnNoteClearClick(object sender, RoutedEventArgs e)
@@ -2372,7 +3214,7 @@ public partial class MainWindow : Window
         if (NoteBox.Text.Length == 0) return;
         if (_noteClearArm is null)
         {
-            NoteClearButton.Content = "Click again to clear";
+            NoteClearButton.Content = "Нажми ещё раз";
             _noteClearArm = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
             _noteClearArm.Tick += (_, _) => ResetNoteClear();
             _noteClearArm.Start();
@@ -2387,7 +3229,7 @@ public partial class MainWindow : Window
     {
         _noteClearArm?.Stop();
         _noteClearArm = null;
-        NoteClearButton.Content = "Clear";
+        NoteClearButton.Content = "Очистить";
     }
 
     // Clicking a field's padding (not just the text box itself) starts typing too.
@@ -2457,6 +3299,7 @@ public partial class MainWindow : Window
     // ---------------------------------------------------------------- clock
 
     private string? _clockWeatherKey;
+    private string? _clockWeatherIconKey;
 
     private void UpdateClock()
     {
@@ -2478,9 +3321,12 @@ public partial class MainWindow : Window
         };
 
         var minimal = _settings.IdleStyle == IdleStyle.Minimal;
+        var hasCompanion = _settings.ShowHoshino;
         var idleText = _settings.ShowDateWhenIdle ? $"{now:ddd d MMM}   {time}" : time;
         var weather = _settings.WeatherEnabled && _settings.WeatherInIdlePill ? _weather.Current : null;
-        var weatherKey = weather is null ? null : $"{weather.Kind}|{weather.IsDay}|{Degrees(weather.Temperature)}";
+        var iconKey = weather is null ? null : $"{weather.Kind}|{weather.IsDay}|{_settings.IslandSkin}";
+        var signedTemp = weather is null ? "" : SignedDegrees(weather.Temperature);
+        var weatherKey = $"{hasCompanion}|{_settings.IslandSkin}|{iconKey}|{signedTemp}";
         var visibility = minimal ? Visibility.Collapsed : Visibility.Visible;
         if (idleText == ClockText.Text && visibility == ClockRow.Visibility && time == BigTime.Text
             && weatherKey == _clockWeatherKey)
@@ -2489,28 +3335,35 @@ public partial class MainWindow : Window
         ClockRow.Visibility = visibility;
         ClockText.Text = idleText;
         BigTime.Text = time;
-        DateText.Text = now.ToString("dddd, MMMM d");
+        DateText.Text = now.ToString("dddd, d MMMM");
 
-        // "| icon 26°" after the time; the icon is only rebuilt when the condition changes.
+        // "◆ icon +14°" after the time; the icon is rebuilt when condition or active skin changes.
         if (weatherKey != _clockWeatherKey)
         {
-            if (weather is not null && _clockWeatherKey?.StartsWith($"{weather.Kind}|{weather.IsDay}|") != true)
-                ClockWeatherIcon.Child = WeatherIcons.Create(weather.Kind, weather.IsDay, 18);
+            if (weather is not null && iconKey != _clockWeatherIconKey)
+                ClockWeatherIcon.Child = WeatherIcons.Create(weather.Kind, weather.IsDay, 19);
+            _clockWeatherIconKey = iconKey;
             _clockWeatherKey = weatherKey;
-            ClockWeatherTemp.Text = weather is null ? "" : Degrees(weather.Temperature);
+            ClockWeatherTemp.Text = signedTemp;
             ClockWeather.Visibility = weather is null ? Visibility.Collapsed : Visibility.Visible;
         }
 
-        // Size the idle pill to its text so seconds/date never clip.
+        // Size the idle pill cleanly around both CompactHoshinoHost (left) and ClockRow (right) with generous breathing room.
+        var isPixel = IslandSkinEngine.Current.IsPixelMode;
+        var targetIdleHeight = isPixel ? 46.0 : 44.0;
         double width, height;
         if (minimal)
         {
-            (width, height) = (110, 26);
+            (width, height) = (hasCompanion ? 128 : 108, hasCompanion ? targetIdleHeight : 28);
         }
         else
         {
+            var padL = hasCompanion ? 50 : 20;
+            const double padR = 20;
+            ClockRow.Margin = new Thickness(padL, 0, padR, 0);
+            ClockRow.InvalidateMeasure();
             ClockRow.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-            (width, height) = (Math.Max(150, Math.Ceiling(ClockRow.DesiredSize.Width) + 44), 34);
+            (width, height) = (Math.Max(hasCompanion ? 168 : 132, Math.Ceiling(ClockRow.DesiredSize.Width) + 8), targetIdleHeight);
         }
 
         if (Math.Abs(ClockView.Width - width) < 0.5 && Math.Abs(ClockView.Height - height) < 0.5) return;
@@ -2521,40 +3374,46 @@ public partial class MainWindow : Window
 
     // ---------------------------------------------------------------- volume / brightness OSD
 
-    private void ShowVolume(float level, bool muted)
-    {
-        var glyph = muted || level <= 0.001 ? ""
-            : level < 0.34 ? ""
-            : level < 0.67 ? ""
-            : "";
-        ShowOsd(IslandView.Volume, level, glyph, dimmed: muted);
-    }
+    private double _osdLevel = 0.5;
 
-    private void ShowBrightness(int level) => ShowOsd(IslandView.Brightness, level / 100.0, "", dimmed: false);
+    private void ShowVolume(float level, bool muted) =>
+        ShowOsd(IslandView.Volume, level, isVolume: true, dimmed: muted);
 
-    private void ShowOsd(IslandView kind, double level, string glyph, bool dimmed)
+    private void ShowBrightness(int level) =>
+        ShowOsd(IslandView.Brightness, level / 100.0, isVolume: false, dimmed: false);
+
+    private void ShowOsd(IslandView kind, double level, bool isVolume, bool dimmed)
     {
         level = Math.Clamp(level, 0, 1);
-        OsdIcon.Text = glyph;
-        OsdPercent.Text = ((int)Math.Round(level * 100)).ToString();
+        _osdLevel = level;
         _osdDimmed = dimmed;
+
+        var spec = IslandSkinEngine.Current;
+        OsdIconHost.Content = IslandChromeRenderer.CreateOsdVectorIcon(isVolume, (float)level, dimmed, spec);
+        OsdPercent.Text = $"{(int)Math.Round(level * 100)}%";
         OsdFill.Background = dimmed
             ? (Brush)FindResource("Secondary")
-            : _accent is { } accent ? new SolidColorBrush(accent) : Brushes.White;
+            : (Brush)Application.Current.Resources["HoshinoProgressBrush"];
 
-        var fill = (ScaleTransform)OsdFill.RenderTransform;
-        if (_currentView == OsdView)
+        UpdateOsdBarWidth(animate: _currentView == OsdView && !_settings.ReduceMotion);
+        _state.ShowTransient(kind, TransientPriority.Osd, TimeSpan.FromSeconds(_settings.OsdSeconds));
+    }
+
+    private void UpdateOsdBarWidth(bool animate = false)
+    {
+        var innerW = OsdTrackBorder.ActualWidth - OsdTrackBorder.BorderThickness.Left - OsdTrackBorder.BorderThickness.Right;
+        if (innerW <= 1) innerW = 200;
+        var targetW = Math.Max(0, innerW * _osdLevel);
+        if (animate)
         {
-            fill.BeginAnimation(ScaleTransform.ScaleXProperty,
-                new DoubleAnimation(level, TimeSpan.FromMilliseconds(140)) { EasingFunction = new CubicEase() });
+            OsdFill.BeginAnimation(WidthProperty,
+                new DoubleAnimation(targetW, TimeSpan.FromMilliseconds(130)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
         }
         else
         {
-            fill.BeginAnimation(ScaleTransform.ScaleXProperty, null);
-            fill.ScaleX = level;
+            OsdFill.BeginAnimation(WidthProperty, null);
+            OsdFill.Width = targetW;
         }
-
-        _state.ShowTransient(kind, TransientPriority.Osd, TimeSpan.FromSeconds(_settings.OsdSeconds));
     }
 
     private void OnVolumeKey(int vk)
@@ -2582,10 +3441,10 @@ public partial class MainWindow : Window
 
         var (title, accent, priority) = alert switch
         {
-            BatteryAlert.PluggedIn => ("Charging", green, TransientPriority.Battery),
-            BatteryAlert.Unplugged => ("On battery", low ? red : (Brush)Brushes.White, TransientPriority.Battery),
-            BatteryAlert.Low => ("Low battery", orange, TransientPriority.LowBattery),
-            _ => ("Battery critically low", red, TransientPriority.LowBattery),
+            BatteryAlert.PluggedIn => ("Зарядка", green, TransientPriority.Battery),
+            BatteryAlert.Unplugged => ("От батареи", low ? red : (Brush)FindResource("HoshinoText"), TransientPriority.Battery),
+            BatteryAlert.Low => ("Низкий заряд", orange, TransientPriority.LowBattery),
+            _ => ("Критический заряд", red, TransientPriority.LowBattery),
         };
 
         BatteryTitle.Text = title;
@@ -2622,7 +3481,7 @@ public partial class MainWindow : Window
         // Hidden: nothing to show, and animating an invisible window would only cost CPU.
         if (IslandHidden || !_state.CanShowTransient(priority)) return;
         InfoGlyph.Text = glyph;
-        InfoGlyph.Foreground = glyphBrush ?? Brushes.White;
+        InfoGlyph.Foreground = glyphBrush ?? (Brush)FindResource("HoshinoText");
         InfoTitle.Text = title;
         InfoDetail.Text = detail ?? "";
         InfoDetail.Foreground = detailBrush ?? (Brush)FindResource("Secondary");
@@ -2634,12 +3493,12 @@ public partial class MainWindow : Window
         ShowInfo(TransientPriority.LockKey, 230,
             "", // keyboard
             key == LockKey.CapsLock ? "Caps Lock" : "Num Lock",
-            on ? "On" : "Off",
+            on ? "Вкл" : "Выкл",
             detailBrush: on ? (Brush)FindResource("Green") : null,
             seconds: Math.Min(_settings.AlertSeconds, 1.5));
 
     private void OnFocusChanged(bool on) =>
-        ShowInfo(TransientPriority.Focus, 280, "", "Do Not Disturb", on ? "On" : "Off",
+        ShowInfo(TransientPriority.Focus, 280, "", "Не беспокоить", on ? "Вкл" : "Выкл",
             detailBrush: on ? new SolidColorBrush(Color.FromRgb(0xBF, 0x5A, 0xF2)) : null,
             glyphBrush: on ? new SolidColorBrush(Color.FromRgb(0xBF, 0x5A, 0xF2)) : null);
 
@@ -2650,17 +3509,17 @@ public partial class MainWindow : Window
         var (glyph, detail) = copy.Kind switch
         {
             ClipboardKind.Files => ("", copy.Preview),
-            ClipboardKind.Image => ("", "Image"),
+            ClipboardKind.Image => ("", "Изображение"),
             ClipboardKind.Text => ("", copy.Preview),
             _ => ("", null),
         };
-        ShowInfo(TransientPriority.Clipboard, 340, glyph, "Copied", detail, seconds: Math.Min(_settings.AlertSeconds, 1.5));
+        ShowInfo(TransientPriority.Clipboard, 340, glyph, "Скопировано", detail, seconds: Math.Min(_settings.AlertSeconds, 1.5));
     }
 
     private void OnPasteShortcut()
     {
-        if (!_typing) ShowInfo(TransientPriority.Clipboard, 340, "", "Pasted",
-            _lastCopy?.Kind == ClipboardKind.Image ? "Image" : _lastCopy?.Preview,
+        if (!_typing) ShowInfo(TransientPriority.Clipboard, 340, "", "Вставлено",
+            _lastCopy?.Kind == ClipboardKind.Image ? "Изображение" : _lastCopy?.Preview,
             seconds: Math.Min(_settings.AlertSeconds, 1.5));
     }
 
@@ -2680,7 +3539,7 @@ public partial class MainWindow : Window
             _ => "",
         };
         var secondary = (Brush)FindResource("Secondary");
-        var status = device.Connected ? device.Battery is { } battery ? $"Connected · {battery}%" : "Connected" : "Disconnected";
+        var status = device.Connected ? device.Battery is { } battery ? $"Подключено · {battery}%" : "Подключено" : "Отключено";
         ShowInfo(TransientPriority.Device, 340, glyph, device.Name, status,
             detailBrush: device.Connected ? (Brush)FindResource("Green") : secondary,
             glyphBrush: device.Connected ? null : secondary);
@@ -2739,9 +3598,9 @@ public partial class MainWindow : Window
             : (Brush)FindResource("ArtPlaceholder");
         var hide = _settings.NotificationsHideText;
         NotifTitle.Text = hide ? n.AppName : n.Title;
-        NotifBody.Text = hide ? "New notification" : FirstLine(n.Body);
+        NotifBody.Text = hide ? "Новое уведомление" : FirstLine(n.Body);
         NotifBody.Visibility = NotifBody.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
-        NotifApp.Text = hide ? "now" : n.AppName;
+        NotifApp.Text = hide ? "сейчас" : n.AppName;
         var seconds = Math.Clamp(_settings.NotificationSeconds, 2, 15);
         SetAlertPage(ExpandedPage.Notifications, seconds);
         if (_state.ShowTransient(IslandView.Notification, TransientPriority.Notification, TimeSpan.FromSeconds(seconds)))
@@ -2753,9 +3612,9 @@ public partial class MainWindow : Window
     private static string TimeAgo(DateTimeOffset time)
     {
         var age = DateTimeOffset.Now - time;
-        return age.TotalMinutes < 1 ? "now"
-            : age.TotalHours < 1 ? $"{(int)age.TotalMinutes}m"
-            : age.TotalDays < 1 ? $"{(int)age.TotalHours}h"
+        return age.TotalMinutes < 1 ? "сейчас"
+            : age.TotalHours < 1 ? $"{(int)age.TotalMinutes} м"
+            : age.TotalDays < 1 ? $"{(int)age.TotalHours} ч"
             : time.LocalDateTime.ToString("ddd");
     }
 
@@ -2775,9 +3634,9 @@ public partial class MainWindow : Window
         NotificationList.Children.Clear();
         NotificationsToolbar.Visibility = items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         NotificationsScroller.Visibility = items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        NotificationsCount.Text = items.Count == 1 ? "1 notification" : $"{items.Count} notifications";
+        NotificationsCount.Text = $"Уведомлений: {items.Count}";
         NotificationsSetup.Visibility = PackageIdentity.HasIdentity ? Visibility.Collapsed : Visibility.Visible;
-        NotificationsEmpty.Text = _notifications.Problem ?? (items.Count == 0 ? "No notifications" : "");
+        NotificationsEmpty.Text = _notifications.Problem ?? (items.Count == 0 ? "Новых уведомлений нет" : "");
         NotificationsEmpty.Visibility = NotificationsEmpty.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
 
         foreach (var n in items)
@@ -2788,7 +3647,7 @@ public partial class MainWindow : Window
                 Width = 24,
                 Height = 24,
                 VerticalAlignment = VerticalAlignment.Top,
-                ToolTip = "Dismiss",
+                ToolTip = "Скрыть",
                 Content = new TextBlock { Style = (Style)FindResource("Glyph"), Text = "", FontSize = 9, Foreground = secondary },
             };
             var id = n.Id;
@@ -2822,7 +3681,7 @@ public partial class MainWindow : Window
                 Margin = new Thickness(0, 0, 0, 10),
                 Background = Brushes.Transparent,
                 Cursor = n.AppId is { Length: > 0 } ? Cursors.Hand : null,
-                ToolTip = n.AppId is { Length: > 0 } ? $"Open {n.AppName}" : null,
+                ToolTip = n.AppId is { Length: > 0 } ? $"Открыть {n.AppName}" : null,
             };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             row.ColumnDefinitions.Add(new ColumnDefinition());
@@ -2861,7 +3720,7 @@ public partial class MainWindow : Window
         var minutes = Math.Max(1, (int)Math.Round((item.Start - DateTime.Now).TotalMinutes));
         SetAlertPage(ExpandedPage.Calendar, _settings.AlertSeconds + 3);
         var color = item.Color is { } c ? new SolidColorBrush(c) : (Brush)FindResource("Orange");
-        ShowInfo(TransientPriority.Calendar, 340, "", item.Title, $"in {minutes} min",
+        ShowInfo(TransientPriority.Calendar, 340, "", item.Title, $"через {minutes} мин",
             detailBrush: color, glyphBrush: color, seconds: _settings.AlertSeconds + 3);
     }
 
@@ -2933,8 +3792,8 @@ public partial class MainWindow : Window
             {
                 Width = 22,
                 Height = 22,
-                Fill = isToday ? accent : isSelected ? new SolidColorBrush(Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF)) : null,
-                Stroke = isSelected && isToday ? Brushes.White : null,
+                Fill = isToday ? accent : isSelected ? (Brush)FindResource("HoshinoControl") : null,
+                Stroke = isSelected && isToday ? (Brush)FindResource("HoshinoText") : null,
                 StrokeThickness = 1.5,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Top,
@@ -2944,7 +3803,7 @@ public partial class MainWindow : Window
                 Text = date.Day.ToString(),
                 FontSize = 11,
                 FontWeight = isToday ? FontWeights.Bold : FontWeights.Normal,
-                Foreground = isToday ? Brushes.White : inMonth ? Brushes.White : secondary,
+                Foreground = isToday ? (Brush)FindResource("HoshinoOnAccent") : inMonth ? (Brush)FindResource("HoshinoText") : secondary,
                 Opacity = inMonth || isToday ? 1 : 0.5,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Top,
@@ -2972,7 +3831,7 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>The Calendar page: grouped by day, with "now" / "in N min" and a Join button for online meetings.</summary>
+    /// <summary>The Calendar page: grouped by day, with "Сейчас" / "через N мин" and a button for online meetings.</summary>
     private void BuildCalendar()
     {
         var secondary = (Brush)FindResource("Secondary");
@@ -3009,7 +3868,7 @@ public partial class MainWindow : Window
                 day = itemDay;
                 CalendarList.Children.Add(new TextBlock
                 {
-                    Text = itemDay == now.Date ? "TODAY" : itemDay == now.Date.AddDays(1) ? "TOMORROW" : itemDay.ToString("dddd d MMM").ToUpperInvariant(),
+                    Text = itemDay == now.Date ? "СЕГОДНЯ" : itemDay == now.Date.AddDays(1) ? "ЗАВТРА" : itemDay.ToString("dddd d MMM").ToUpperInvariant(),
                     FontSize = 10,
                     FontWeight = FontWeights.SemiBold,
                     Foreground = secondary,
@@ -3024,7 +3883,7 @@ public partial class MainWindow : Window
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             row.Children.Add(new Border { Width = 3, CornerRadius = new CornerRadius(1.5), Background = color, Margin = new Thickness(0, 1, 10, 1) });
 
-            var time = item.AllDay ? "All day" : $"{item.Start:t} – {item.End:t}";
+            var time = item.AllDay ? "Весь день" : $"{item.Start:t} – {item.End:t}";
             var text = new StackPanel { Children =
             {
                 new TextBlock { Text = item.Title, FontSize = 13, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis },
@@ -3041,12 +3900,12 @@ public partial class MainWindow : Window
 
             var right = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
             if (item.IsNow(now))
-                right.Children.Add(new TextBlock { Text = "Now", FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = color, VerticalAlignment = VerticalAlignment.Center });
+                right.Children.Add(new TextBlock { Text = "Сейчас", FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = color, VerticalAlignment = VerticalAlignment.Center });
             else if (!item.AllDay && item.Start > now && item.Start - now < TimeSpan.FromHours(1))
-                right.Children.Add(new TextBlock { Text = $"in {(int)Math.Ceiling((item.Start - now).TotalMinutes)} min", FontSize = 11, Foreground = color, VerticalAlignment = VerticalAlignment.Center });
+                right.Children.Add(new TextBlock { Text = $"через {(int)Math.Ceiling((item.Start - now).TotalMinutes)} мин", FontSize = 11, Foreground = color, VerticalAlignment = VerticalAlignment.Center });
             if (item.JoinUrl is { } url && (item.IsNow(now) || (item.Start > now && item.Start - now < TimeSpan.FromHours(12))))
             {
-                var join = new Button { Style = (Style)FindResource("ChipButton"), Content = "Join", Margin = new Thickness(8, 0, 0, 0), ToolTip = url };
+                var join = new Button { Style = (Style)FindResource("ChipButton"), Content = "Войти", Margin = new Thickness(8, 0, 0, 0), ToolTip = url };
                 join.Click += (_, _) =>
                 {
                     _hoverSuppressed = true;
@@ -3066,6 +3925,7 @@ public partial class MainWindow : Window
     // ---------------------------------------------------------------- file shelf
 
     private string? _shelfKey;
+    private string? _selectedShelfPath;
     private bool _draggingOut;
     private Point? _dragStart;
 
@@ -3092,12 +3952,14 @@ public partial class MainWindow : Window
         // "Link" is honest (the shelf keeps a reference, not a copy); fall back to Copy if not offered.
         e.Effects = e.AllowedEffects.HasFlag(DragDropEffects.Link) ? DragDropEffects.Link : DragDropEffects.Copy;
 
+        _homeHoshino.SetFileDragHover(true);
+        _compactHoshino.SetFileDragHover(true);
         _hoverTimer.Stop();
         if (!_state.IsExpanded) SetExpanded(true);
         if (_page != ExpandedPage.Shelf) ShowPage(ExpandedPage.Shelf, animate: true);
         if (ShelfDropOverlay.Visibility != Visibility.Visible)
         {
-            ShelfDropRect.Stroke = _accent is { } accent ? new SolidColorBrush(accent) : Brushes.White;
+            ShelfDropRect.Stroke = (Brush)FindResource("HoshinoAccent");
             ShelfDropOverlay.Visibility = Visibility.Visible;
         }
     }
@@ -3105,24 +3967,46 @@ public partial class MainWindow : Window
     private void OnShelfDragLeave(object sender, DragEventArgs e)
     {
         // DragLeave also fires moving between elements inside the island; only react on really leaving.
-        if (!IsCursorOverPill()) ShelfDropOverlay.Visibility = Visibility.Collapsed;
+        if (!IsCursorOverPill())
+        {
+            ShelfDropOverlay.Visibility = Visibility.Collapsed;
+            _homeHoshino.SetFileDragHover(false);
+            _compactHoshino.SetFileDragHover(false);
+        }
     }
 
     private void OnShelfDrop(object sender, DragEventArgs e)
     {
         e.Handled = true;
         ShelfDropOverlay.Visibility = Visibility.Collapsed;
+        _homeHoshino.SetFileDragHover(false);
+        _compactHoshino.SetFileDragHover(false);
         if (_draggingOut || !_settings.ShelfEnabled || e.Data.GetData(DataFormats.FileDrop) is not string[] paths) return;
         _shelf.Add(paths);
     }
 
-    private void OnShelfClearClick(object sender, RoutedEventArgs e) => _shelf.Clear();
+    private void OnShelfClearClick(object sender, RoutedEventArgs e)
+    {
+        _selectedShelfPath = null;
+        _shelf.Clear();
+    }
+
+    private void OnShelfQrClick(object sender, RoutedEventArgs e)
+    {
+        if (_selectedShelfPath is { } single && _shelf.Items.Contains(single, StringComparer.OrdinalIgnoreCase) && System.IO.File.Exists(single))
+            _qrPanel.Open(new[] { single }, singleItem: true);
+        else
+            _qrPanel.Open(_shelf.Items, singleItem: false);
+    }
 
     /// <summary>Rebuilds the shelf tiles; thumbnails load afterwards at background priority.</summary>
     private void BuildShelf()
     {
+        if (_selectedShelfPath is not null && !_shelf.Items.Contains(_selectedShelfPath, StringComparer.OrdinalIgnoreCase))
+            _selectedShelfPath = null;
+
         var f = Scale * VisualTreeHelper.GetDpi(this).DpiScaleX;
-        var key = $"{f}\n{string.Join('\n', _shelf.Items)}";
+        var key = $"{f}|{_selectedShelfPath}\n{string.Join('\n', _shelf.Items)}";
         if (key == _shelfKey) return;
         _shelfKey = key;
 
@@ -3131,7 +4015,8 @@ public partial class MainWindow : Window
         ShelfEmpty.Visibility = items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         ShelfToolbar.Visibility = items.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         ShelfScroller.Visibility = items.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
-        ShelfCount.Text = items.Count == 1 ? "1 item" : $"{items.Count} items";
+        ShelfCount.Text = $"Файлов: {items.Count}";
+        ShelfQrButton.Content = _selectedShelfPath is not null ? "На телефон · 1 (QR)" : "На телефон (QR)";
 
         const double tileWidth = 76, thumb = 44;
         var pixels = (int)Math.Round(thumb * f);
@@ -3159,10 +4044,25 @@ public partial class MainWindow : Window
                 VerticalAlignment = VerticalAlignment.Top,
                 Background = new SolidColorBrush(Color.FromArgb(0xCC, 0x3A, 0x3A, 0x3C)),
                 Visibility = Visibility.Hidden,
-                ToolTip = "Remove from the shelf",
+                ToolTip = "Убрать с полки",
                 Content = new TextBlock { Style = (Style)FindResource("Glyph"), Text = "", FontSize = 8 },
             };
             remove.Click += (_, _) => _shelf.Remove(path);
+
+            var isSelected = string.Equals(_selectedShelfPath, path, StringComparison.OrdinalIgnoreCase);
+            var selectionFrame = new Border
+            {
+                CornerRadius = new CornerRadius(10),
+                BorderThickness = new Thickness(isSelected ? 1.5 : 0),
+                Margin = new Thickness(2),
+                IsHitTestVisible = false,
+            };
+            if (isSelected)
+            {
+                selectionFrame.SetResourceReference(Border.BorderBrushProperty, "HoshinoAccent");
+                selectionFrame.SetResourceReference(Border.BackgroundProperty, "HoshinoControl");
+                selectionFrame.Opacity = 0.55;
+            }
 
             var tile = new Grid
             {
@@ -3170,10 +4070,11 @@ public partial class MainWindow : Window
                 Height = thumb + 34,
                 Background = Brushes.Transparent, // hit-testable for dragging
                 Opacity = exists ? 1 : 0.4,
-                ToolTip = exists ? path : $"{path}\n(missing: moved or deleted)",
+                ToolTip = exists ? path : $"{path}\n(файл перемещён или удалён)",
                 Cursor = Cursors.Hand,
                 Children =
                 {
+                    selectionFrame,
                     new StackPanel
                     {
                         Margin = new Thickness(0, 4, 0, 0),
@@ -3197,13 +4098,32 @@ public partial class MainWindow : Window
                     remove,
                 },
             };
+            if (exists && System.IO.File.Exists(path))
+            {
+                var tileMenu = new ContextMenu();
+                var qrItem = new MenuItem { Header = "На телефон (QR)" };
+                qrItem.Click += (_, _) => _qrPanel.Open(new[] { path }, singleItem: true);
+                var openItem = new MenuItem { Header = "Открыть файл" };
+                openItem.Click += (_, _) => OpenPath(path);
+                tileMenu.Items.Add(qrItem);
+                tileMenu.Items.Add(openItem);
+                tile.ContextMenu = tileMenu;
+            }
             tile.MouseEnter += (_, _) => remove.Visibility = Visibility.Visible;
             tile.MouseLeave += (_, _) => remove.Visibility = Visibility.Hidden;
             tile.MouseLeftButtonDown += (_, e) =>
             {
                 if (e.ClickCount == 2 && exists) OpenPath(path);
             };
-            tile.MouseLeftButtonUp += (_, e) => e.Handled = true; // a click on a tile doesn't collapse the island
+            tile.MouseLeftButtonUp += (_, e) =>
+            {
+                e.Handled = true; // a click on a tile doesn't collapse the island
+                if (!_draggingOut && System.IO.File.Exists(path))
+                {
+                    _selectedShelfPath = string.Equals(_selectedShelfPath, path, StringComparison.OrdinalIgnoreCase) ? null : path;
+                    BuildShelf();
+                }
+            };
             StartDragOnMove(tile, () => new List<string> { path });
             ShelfItems.Children.Add(tile);
 
@@ -3304,6 +4224,11 @@ public partial class MainWindow : Window
     }
 
     private static string Degrees(double value) => $"{Math.Round(value):0}°";
+    private static string SignedDegrees(double value)
+    {
+        var rounded = (int)Math.Round(value);
+        return rounded > 0 ? $"+{rounded}°" : $"{rounded}°";
+    }
 
     /// <summary>Fills the Weather page from the latest report.</summary>
     private void UpdateWeather()
@@ -3315,7 +4240,7 @@ public partial class MainWindow : Window
         {
             WeatherNowIcon.Child = null;
             WeatherNowTemp.Text = "";
-            WeatherCondition.Text = _weather.Problem is null ? "Loading weather…" : "No weather";
+            WeatherCondition.Text = _weather.Problem is null ? "Загрузка погоды…" : "Погода недоступна";
             WeatherDetail.Text = WeatherPlaceText.Text = "";
             WeatherHours.Children.Clear();
             WeatherDays.Children.Clear();
@@ -3325,16 +4250,16 @@ public partial class MainWindow : Window
 
         var secondary = (Brush)FindResource("Secondary");
         WeatherNowIcon.Child = WeatherIcons.Create(report.Kind, report.IsDay, 50);
-        WeatherNowTemp.Text = Degrees(report.Temperature);
+        WeatherNowTemp.Text = SignedDegrees(report.Temperature);
         WeatherCondition.Text = report.Condition;
         var today = report.Days.FirstOrDefault();
         WeatherDetail.Text = today is null
-            ? $"Feels like {Degrees(report.FeelsLike)}"
-            : $"H {Degrees(today.Max)}  L {Degrees(today.Min)}  ·  Feels like {Degrees(report.FeelsLike)}";
+            ? $"Ощущается как {SignedDegrees(report.FeelsLike)}"
+            : $"Макс {SignedDegrees(today.Max)}  Мин {SignedDegrees(today.Min)}  ·  Ощущается как {SignedDegrees(report.FeelsLike)}";
         WeatherPlaceText.Text = report.Place;
         WeatherAttribution.Text = _settings.WeatherUseDeviceLocation && report.Place == _settings.WeatherDevicePlace
-            ? "Weather data by Open-Meteo.com · place © OpenStreetMap contributors"
-            : "Weather data by Open-Meteo.com";
+            ? "Погода: Open-Meteo.com · локация © OpenStreetMap"
+            : "Погода: Open-Meteo.com";
 
         // Every second hour for the next 12: time, icon, temperature.
         WeatherHours.Children.Clear();
@@ -3367,7 +4292,7 @@ public partial class MainWindow : Window
 
             var name = new TextBlock
             {
-                Text = day.Date.Date == DateTime.Today ? "Today" : day.Date.ToString("ddd"),
+                Text = day.Date.Date == DateTime.Today ? "Сегодня" : day.Date.ToString("ddd"),
                 FontSize = 13,
                 VerticalAlignment = VerticalAlignment.Center,
             };
@@ -3381,7 +4306,7 @@ public partial class MainWindow : Window
             bar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(before, GridUnitType.Star) });
             bar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(width2, GridUnitType.Star) });
             bar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Math.Max(0, 1 - before - width2), GridUnitType.Star) });
-            var track = new Border { CornerRadius = new CornerRadius(2), Background = new SolidColorBrush(Color.FromArgb(0x26, 0xFF, 0xFF, 0xFF)) };
+            var track = new Border { CornerRadius = new CornerRadius(2), Background = (Brush)FindResource("HoshinoTrack") };
             Grid.SetColumnSpan(track, 3);
             var range = new Border { CornerRadius = new CornerRadius(2), Background = fill };
             Grid.SetColumn(range, 1);
@@ -3456,7 +4381,7 @@ public partial class MainWindow : Window
                     Width = shown,
                     Height = shown,
                     Children = { new TextBlock { Style = (Style)FindResource("Glyph"), Text = "", FontSize = Math.Max(14, dipSize * 0.5), Foreground = (Brush)FindResource("Secondary") } },
-                }, "Add", tileWidth, tileHeight);
+                }, "Добавить", tileWidth, tileHeight);
             add.Click += (_, _) => OpenSettings();
             QuickAppsRow.Children.Add(add);
         }
@@ -3503,6 +4428,19 @@ public partial class MainWindow : Window
         var text = TimerService.Format(_timer.Remaining);
         TimerTextSmall.Text = text;
         TimerTextLarge.Text = text;
+        if (_pixelTimerText is not null) _pixelTimerText.Text = text;
+        if (ActivityBubble.Visibility == Visibility.Visible && _state.SecondaryView == IslandView.Timer)
+        {
+            ActivityBubbleText.Text = TimerService.FormatCompact(_timer.Remaining);
+            ActivityBubble.ToolTip = text;
+            RefreshActivityBubbleVisuals(ActivityBubble.Width);
+        }
+        if (_settings.PerimeterFocusTimer && _timer.IsActive && !_state.IsExpanded && !_voiceFocus && !IslandHidden && IslandRimPath.Data is PathGeometry rim)
+        {
+            IslandChromeRenderer.UpdatePerimeterFocus(
+                PerimeterTimerTrack, PerimeterTimerArc, PerimeterTimerDot,
+                rim, IslandSkinEngine.Current, visible: true, _timer.RemainingRatio);
+        }
     }
 
     private void OnTimerStateChanged()
@@ -3510,15 +4448,28 @@ public partial class MainWindow : Window
         TimerPauseGlyph.Text = _timer.IsPaused ? "" : "";
         TimerTextSmall.Opacity = _timer.IsPaused ? 0.55 : 1;
         TimerTextLarge.Opacity = _timer.IsPaused ? 0.55 : 1;
+        RebuildPixelFocusDock();
+        if (IslandSkinEngine.Current.IsPixelMode)
+        {
+            TamagotchiStatusHost.Content = IslandSkinEngine.CreateTamagotchiStatusStrip(
+                HoshinoAtmosphere.IsDrowsy(DateTime.Now),
+                _media.Current?.IsPlaying == true,
+                _timer.IsActive);
+        }
         OnTimerTick();
+        _compactHoshino.UpdateState();
+        _homeHoshino.UpdateState();
         _state.TimerActive = _timer.IsActive;
+        UpdateSecondActivity();
+        ApplyGeometry();
         if (_state.IsExpanded) Render();
     }
 
     private void OnTimerFinished()
     {
         TimerDoneGlyph.Text = ""; // the view is shared with alarms
-        TimerDoneText.Text = "Timer finished";
+        var goal = _settings.FocusTaskId is { } id ? _notes.Todos.FirstOrDefault(t => !t.Done && t.Id == id)?.Text : null;
+        TimerDoneText.Text = string.IsNullOrWhiteSpace(goal) ? "Фокус завершён" : $"Готово · {goal}";
         SystemSounds.Exclamation.Play();
         _state.ShowTransient(IslandView.TimerDone, TransientPriority.TimerDone, TimeSpan.FromSeconds(5));
     }
@@ -3548,6 +4499,8 @@ public partial class MainWindow : Window
         StopwatchTextSmall.Opacity = _stopwatch.IsRunning ? 1 : 0.55;
         StopwatchTextLarge.Opacity = _stopwatch.IsRunning ? 1 : 0.55;
         StopwatchTextLarge.Text = StopwatchService.Format(_stopwatch.Elapsed, tenths: true);
+        if (IslandSkinEngine.Current.IsPixelMode)
+            FocusDockBorder.Visibility = _stopwatch.IsActive ? Visibility.Visible : Visibility.Collapsed;
         OnStopwatchTick();
         _state.StopwatchActive = _stopwatch.IsActive;
         if (_state.IsExpanded) Render();
@@ -3561,7 +4514,7 @@ public partial class MainWindow : Window
     private void OnAlarmRing(Alarm alarm)
     {
         TimerDoneGlyph.Text = "";
-        TimerDoneText.Text = string.IsNullOrWhiteSpace(alarm.Label) ? $"Alarm  {alarm.Time}" : $"{alarm.Label}  {alarm.Time}";
+        TimerDoneText.Text = string.IsNullOrWhiteSpace(alarm.Label) ? $"Будильник  {alarm.Time}" : $"{alarm.Label}  {alarm.Time}";
         try
         {
             var file = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Media", "Alarm01.wav");
@@ -3593,31 +4546,31 @@ public partial class MainWindow : Window
         switch (change.Kind)
         {
             case StatusKind.MicMuted:
-                ShowInfo(TransientPriority.LockKey, 250, "", "Microphone", "Muted", detailBrush: red, glyphBrush: red, seconds: 1.8);
+                ShowInfo(TransientPriority.LockKey, 250, "", "Микрофон", "Выкл", detailBrush: red, glyphBrush: red, seconds: 1.8);
                 break;
             case StatusKind.MicUnmuted:
-                ShowInfo(TransientPriority.LockKey, 250, "", "Microphone", "On", detailBrush: green, seconds: 1.8);
+                ShowInfo(TransientPriority.LockKey, 250, "", "Микрофон", "Вкл", detailBrush: green, seconds: 1.8);
                 break;
             case StatusKind.EnergySaverOn:
-                ShowInfo(TransientPriority.Battery, 260, "", "Energy Saver", "On", detailBrush: green, glyphBrush: green);
+                ShowInfo(TransientPriority.Battery, 260, "", "Экономия заряда", "Вкл", detailBrush: green, glyphBrush: green);
                 break;
             case StatusKind.EnergySaverOff:
-                ShowInfo(TransientPriority.Battery, 260, "", "Energy Saver", "Off");
+                ShowInfo(TransientPriority.Battery, 260, "", "Экономия заряда", "Выкл");
                 break;
             case StatusKind.WifiConnected:
-                ShowInfo(TransientPriority.Device, 320, "", change.Detail ?? "Wi-Fi", "Connected", detailBrush: green);
+                ShowInfo(TransientPriority.Device, 320, "", change.Detail ?? "Wi-Fi", "Подключено", detailBrush: green);
                 break;
             case StatusKind.WifiDisconnected:
-                ShowInfo(TransientPriority.Device, 320, "", change.Detail ?? "Wi-Fi", "Disconnected", glyphBrush: secondary);
+                ShowInfo(TransientPriority.Device, 320, "", change.Detail ?? "Wi-Fi", "Отключено", glyphBrush: secondary);
                 break;
             case StatusKind.VpnConnected:
-                ShowInfo(TransientPriority.Device, 320, "", change.Detail ?? "VPN", "VPN on", detailBrush: green);
+                ShowInfo(TransientPriority.Device, 320, "", change.Detail ?? "VPN", "VPN вкл", detailBrush: green);
                 break;
             case StatusKind.VpnDisconnected:
-                ShowInfo(TransientPriority.Device, 320, "", change.Detail ?? "VPN", "VPN off", glyphBrush: secondary);
+                ShowInfo(TransientPriority.Device, 320, "", change.Detail ?? "VPN", "VPN выкл", glyphBrush: secondary);
                 break;
             case StatusKind.Offline:
-                ShowInfo(TransientPriority.Device, 280, "", "No internet", null, glyphBrush: red);
+                ShowInfo(TransientPriority.Device, 280, "", "Нет сети", null, glyphBrush: red);
                 break;
         }
     }
@@ -3630,6 +4583,78 @@ public partial class MainWindow : Window
     /// </summary>
     private Artwork? _bubbleArt;
 
+    private void RefreshActivityBubbleVisuals(double size)
+    {
+        var spec = IslandSkinEngine.Current;
+        var secondary = _state.SecondaryView;
+        var isTimer = secondary == IslandView.Timer && _timer.IsActive;
+
+        // Sibling ActivityBubbleShadow draws ChibiPop ink shadow without rasterizing ActivityBubbleText
+        ActivityBubble.Effect = null;
+        ActivityBubbleBack.StrokeThickness = spec.IsCartoonSticker ? 2.4 : 1.3;
+
+        if (spec.IsPixelMode)
+        {
+            ActivityBubbleBack.Visibility = Visibility.Collapsed;
+            ActivityBubbleRingTrack.Visibility = Visibility.Collapsed;
+            ActivityBubbleArc.Visibility = Visibility.Collapsed;
+            ActivityBubbleKeychainHost.Content = IslandChromeRenderer.CreateTamagotchiKeychainBubble(size);
+            ActivityBubbleKeychainHost.Visibility = Visibility.Visible;
+            if (isTimer)
+            {
+                ActivityBubbleGlyph.Visibility = Visibility.Collapsed;
+                ActivityBubbleText.Visibility = Visibility.Visible;
+                ActivityBubbleText.FontSize = 9.5;
+                ActivityBubbleText.Foreground = IslandSkinEngine.Frozen(Color.FromRgb(0x14, 0x2D, 0x2A));
+            }
+            return;
+        }
+
+        ActivityBubbleKeychainHost.Visibility = Visibility.Collapsed;
+        ActivityBubbleBack.Visibility = Visibility.Visible;
+
+        if (isTimer)
+        {
+            // Match Row 2 of all compact renders: yellow sticker ring + pink inner arc in Chibi Pop,
+            // glowing glass ring in Win7 Aero, frosted white + cyan arc in Shittim, smoked + gold arc in Horus!
+            ActivityBubbleBack.Fill = spec.IsCartoonSticker
+                ? IslandSkinEngine.Frozen(Color.FromRgb(0xFF, 0xE0, 0x66))
+                : spec.IsAeroGlass
+                    ? IslandSkinEngine.CreateAeroConvexGlassBrush(false)
+                    : (Brush)FindResource("HoshinoBackground");
+
+            ActivityBubbleRingTrack.Visibility = Visibility.Visible;
+            ActivityBubbleRingTrack.Fill = spec.IsCartoonSticker
+                ? IslandSkinEngine.Frozen(Color.FromRgb(0xFF, 0xF8, 0xFC))
+                : Brushes.Transparent;
+            ActivityBubbleRingTrack.Stroke = spec.IsCartoonSticker
+                ? IslandSkinEngine.Frozen(Color.FromRgb(0x2A, 0x1E, 0x2E))
+                : (Brush)FindResource("HoshinoTrack");
+            ActivityBubbleRingTrack.StrokeThickness = spec.IsCartoonSticker ? 1.8 : 2.2;
+            ActivityBubbleRingTrack.Margin = new Thickness(spec.IsCartoonSticker ? 5.2 : 3.6);
+
+            ActivityBubbleArc.Visibility = Visibility.Visible;
+            ActivityBubbleArc.StrokeThickness = spec.IsCartoonSticker ? 3.2 : 2.6;
+            ActivityBubbleArc.Stroke = spec.IsShittimTablet || spec.IsAeroGlass
+                ? IslandSkinEngine.Frozen(Color.FromRgb(0x38, 0xBD, 0xF8))
+                : spec.IsCartoonSticker
+                    ? IslandSkinEngine.Frozen(Color.FromRgb(0xFF, 0x85, 0xAD))
+                    : IslandSkinEngine.Frozen(spec.Gold);
+            ActivityBubbleArc.Data = IslandChromeRenderer.BuildCircularProgressArc(size, spec.IsCartoonSticker ? 3.8 : 4.2, _timer.RemainingRatio);
+            ActivityBubbleGlyph.Visibility = Visibility.Collapsed;
+            ActivityBubbleText.Visibility = Visibility.Visible;
+            ActivityBubbleText.FontSize = 11;
+            ActivityBubbleText.Foreground = spec.IsAeroGlass ? Brushes.White : (Brush)FindResource("HoshinoText");
+        }
+        else
+        {
+            ActivityBubbleBack.SetResourceReference(Shape.FillProperty, "HoshinoBackground");
+            ActivityBubbleRingTrack.Visibility = Visibility.Collapsed;
+            ActivityBubbleArc.Visibility = Visibility.Collapsed;
+            ActivityBubbleText.Visibility = Visibility.Collapsed;
+        }
+    }
+
     private void UpdateSecondActivity()
     {
         var secondary = !_voiceFocus && _settings.ShowSecondActivity && !_state.IsExpanded && !_lyricsPanel.CompactEnabled && _state.Transient is null
@@ -3640,8 +4665,6 @@ public partial class MainWindow : Window
 
         if (secondary == IslandView.Media)
         {
-            // Build the brush only when the artwork changes (state changes are frequent; animated
-            // artwork would restart on every new brush).
             if (!ReferenceEquals(_bubbleArt, _shownArt))
             {
                 _bubbleArt = _shownArt;
@@ -3649,7 +4672,8 @@ public partial class MainWindow : Window
             }
             var art = ActivityBubbleArt.Fill;
             ActivityBubbleArt.Visibility = art is null ? Visibility.Collapsed : Visibility.Visible;
-            ActivityBubbleGlyph.Text = ""; // music note, if no art
+            ActivityBubbleText.Visibility = Visibility.Collapsed;
+            ActivityBubbleGlyph.Text = "";
             ActivityBubbleGlyph.Foreground = (Brush)FindResource("Secondary");
             ActivityBubbleGlyph.Visibility = art is null ? Visibility.Visible : Visibility.Collapsed;
             ActivityBubble.ToolTip = _media.Current?.Title;
@@ -3657,17 +4681,26 @@ public partial class MainWindow : Window
         else if (secondary is { } activity)
         {
             ActivityBubbleArt.Visibility = Visibility.Collapsed;
-            ActivityBubbleGlyph.Visibility = Visibility.Visible;
-            ActivityBubbleGlyph.Text = "";
-            ActivityBubbleGlyph.Foreground = (Brush)FindResource(activity == IslandView.Timer ? "Orange" : "Cyan");
-            ActivityBubble.ToolTip = activity == IslandView.Timer ? TimerService.Format(_timer.Remaining) : "Stopwatch";
+            if (activity == IslandView.Timer)
+            {
+                ActivityBubbleText.Text = TimerService.FormatCompact(_timer.Remaining);
+                ActivityBubble.ToolTip = TimerService.Format(_timer.Remaining);
+            }
+            else
+            {
+                ActivityBubbleText.Visibility = Visibility.Collapsed;
+                ActivityBubbleGlyph.Visibility = Visibility.Visible;
+                ActivityBubbleGlyph.Text = "";
+                ActivityBubbleGlyph.Foreground = (Brush)FindResource("Cyan");
+                ActivityBubble.ToolTip = "Секундомер";
+            }
         }
 
+        if (show) RefreshActivityBubbleVisuals(ActivityBubble.Width);
         if (show == wasShown) return;
         ActivityBubble.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
         if (show)
         {
-            // Pops out of the pill's edge, like the iPhone's island splitting in two.
             var time = TimeSpan.FromMilliseconds(320 / SpeedFactor);
             var pop = new DoubleAnimation(0.2, 1, time) { EasingFunction = new BackEase { Amplitude = 0.35, EasingMode = EasingMode.EaseOut } };
             Timeline.SetDesiredFrameRate(pop, FrameRateCap);
@@ -3675,7 +4708,7 @@ public partial class MainWindow : Window
             scale.BeginAnimation(ScaleTransform.ScaleXProperty, pop);
             scale.BeginAnimation(ScaleTransform.ScaleYProperty, pop);
         }
-        ApplyGeometry(); // position, and move the privacy dot past it
+        ApplyGeometry();
     }
 
     /// <summary>Opens the app that's playing (click on the collapsed music activity, when enabled).</summary>
@@ -3709,17 +4742,19 @@ public partial class MainWindow : Window
         _lyricsPanel.Update(_media.Current);
         UpdateCompactArtwork();
         var media = _media.Current;
+        var spec = IslandSkinEngine.Current;
         if (media is not null)
         {
-            var title = string.IsNullOrWhiteSpace(media.Title) ? "Unknown title" : media.Title;
+            var title = string.IsNullOrWhiteSpace(media.Title) ? "Без названия" : media.Title;
 
             MediaTitleSmall.Text = title;
-            MediaTitleLarge.Text = title;
-            MediaArtistLarge.Text = string.IsNullOrEmpty(media.Album) ? media.Artist : $"{media.Artist} — {media.Album}";
+            MediaTitleLarge.Text = spec.IsPixelMode && !title.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase) ? $"{title}.mp3" : title;
+            MediaArtistLarge.Text = spec.IsPixelMode
+                ? $"{(string.IsNullOrEmpty(media.Artist) ? "Track" : media.Artist)} · 128kbps"
+                : string.IsNullOrEmpty(media.Album) ? media.Artist : $"{media.Artist} — {media.Album}";
             MediaAppName.Text = media.AppName;
             if (!ReferenceEquals(media.Art, _shownArt))
             {
-                // Only rebuild brushes on new artwork, so animated art doesn't restart on every update.
                 _shownArt = media.Art;
                 SetArt(MediaArtSmall, MediaArtSmallFallback, media.Art);
                 SetArt(MediaArtLarge, MediaArtLargeFallback, media.Art);
@@ -3732,19 +4767,38 @@ public partial class MainWindow : Window
         }
 
         _state.MediaPlaying = media?.IsPlaying == true;
-        UpdateSecondActivity(); // the bubble may show this artwork
+        _mediaArtDecorator.UpdateState(media?.IsPlaying == true, IslandHidden, Math.Clamp(_settings.CoverSize, 64, 96), MediaArtLarge, MediaArtSmall);
+        UpdateSecondActivity();
         UpdateMotionArtwork(media);
         ApplyTheme();
         UpdateEqualizer();
         if (_state.IsExpanded) Render();
     }
 
-    /// <summary>
-    /// Animate the bars only while they're on screen: any running WPF animation keeps the whole window
-    /// re-rendering every frame, which competes with Wallpaper Engine for the GPU.
-    /// </summary>
-    private void UpdateEqualizer() =>
-        SetEqualizerRunning(_media.Current?.IsPlaying == true && _currentView == MediaView && !IslandHidden);
+    private void UpdateEqualizer()
+    {
+        var playing = _media.Current?.IsPlaying == true;
+        var needAudio = !IslandHidden && !_gameSuppressed && (playing || _voiceFocus || _aiPanel.IsSpeaking);
+        SetEqualizerRunning(needAudio);
+    }
+
+    private void SetProgressFraction(double fraction)
+    {
+        fraction = Math.Clamp(fraction, 0, 1);
+        var spec = IslandSkinEngine.Current;
+        var innerW = ProgressTrackBorder.ActualWidth - ProgressTrackBorder.BorderThickness.Left - ProgressTrackBorder.BorderThickness.Right;
+        if (innerW <= 1) innerW = ProgressHit.ActualWidth > 1 ? ProgressHit.ActualWidth : 210;
+        ProgressFill.Width = Math.Max(0, innerW * fraction);
+
+        ProgressThumb.Visibility = spec.IsPixelMode ? Visibility.Collapsed : Visibility.Visible;
+        if (ProgressHit.ActualWidth > 0 && !spec.IsPixelMode)
+        {
+            var thumbW = ProgressThumb.Width > 0 ? ProgressThumb.Width : 11;
+            ProgressThumb.Margin = new Thickness(
+                Math.Clamp(ProgressHit.ActualWidth * fraction - thumbW / 2, 0, Math.Max(0, ProgressHit.ActualWidth - thumbW)),
+                0, 0, 0);
+        }
+    }
 
     private void UpdateProgress()
     {
@@ -3754,7 +4808,7 @@ public partial class MainWindow : Window
         var position = media.EstimatePosition(DateTimeOffset.Now);
         ElapsedText.Text = FormatMediaTime(position);
         RemainingText.Text = "-" + FormatMediaTime(media.Duration - position);
-        ((ScaleTransform)ProgressFill.RenderTransform).ScaleX = position / media.Duration;
+        SetProgressFraction(position / media.Duration);
     }
 
     private void OnProgressMouseUp(object sender, MouseButtonEventArgs e)
@@ -3763,7 +4817,7 @@ public partial class MainWindow : Window
         if (_media.Current is not { CanSeek: true, Duration.Ticks: > 0 } media || ProgressHit.ActualWidth <= 0) return;
 
         var fraction = Math.Clamp(e.GetPosition(ProgressHit).X / ProgressHit.ActualWidth, 0, 1);
-        ((ScaleTransform)ProgressFill.RenderTransform).ScaleX = fraction;
+        SetProgressFraction(fraction);
         _media.Seek(media.Duration * fraction);
     }
 
@@ -3784,29 +4838,44 @@ public partial class MainWindow : Window
     private readonly double[] _barLevels = new double[4];
     private bool _meterRunning;
 
-    /// <summary>
-    /// One frame of the real waveform. Peaks are mapped to a -48..0 dB scale; each bar gets its own
-    /// mix of left / right and its own attack and decay plus a little phase wobble, so four bars from a
-    /// stereo peak meter read like a spectrum (as the iPhone's waveform does, it isn't a true one).
-    /// </summary>
     private void OnMeterTick(object? sender, EventArgs e)
     {
         var (left, right) = _meter.Read();
         static double Db(float peak) => peak <= 0.0001f ? 0 : Math.Clamp((20 * Math.Log10(peak) + 48) / 48, 0, 1);
         var l = Db(left);
         var r = Db(right);
+        var combined = Math.Max(l, r);
+        _audioPeak += (combined - _audioPeak) * 0.45;
+
         var t = _frameClock.Elapsed.TotalSeconds;
-        var i = 0;
-        foreach (UIElement bar in Equalizer.Children)
+        var pixel = IslandSkinEngine.Current.IsPixelMode;
+
+        if (_currentView == MediaView)
         {
-            var mix = i switch { 0 => l, 1 => 0.6 * l + 0.4 * r, 2 => 0.4 * l + 0.6 * r, _ => r };
-            var wobble = 0.82 + 0.18 * Math.Sin(t * (7.3 + 2.9 * i) + i * 1.7);
-            var target = Math.Clamp(mix * wobble, 0, 1);
-            // Fast attack, slower release, different per bar.
-            var rate = target > _barLevels[i] ? 0.65 : 0.18 + 0.05 * i;
-            _barLevels[i] += (target - _barLevels[i]) * rate;
-            ((ScaleTransform)bar.RenderTransform).ScaleY = 0.22 + 0.78 * _barLevels[i];
-            i++;
+            var i = 0;
+            foreach (UIElement bar in Equalizer.Children)
+            {
+                var mix = i switch { 0 => l, 1 => 0.6 * l + 0.4 * r, 2 => 0.4 * l + 0.6 * r, _ => r };
+                var wobble = 0.82 + 0.18 * Math.Sin(t * (7.3 + 2.9 * i) + i * 1.7);
+                var target = Math.Clamp(mix * wobble, 0, 1);
+                var rate = target > _barLevels[i] ? 0.65 : 0.18 + 0.05 * i;
+                _barLevels[i] += (target - _barLevels[i]) * rate;
+                var sy = 0.22 + 0.78 * _barLevels[i];
+                if (pixel) sy = Math.Max(0.2, Math.Round(sy * 5.0) / 5.0);
+                ((ScaleTransform)bar.RenderTransform).ScaleY = sy;
+                i++;
+            }
+        }
+
+        if (_voiceFocus && !_settings.ReduceMotion)
+        {
+            var voiceEnergy = _aiPanel.IsListening ? Math.Max(0.35, combined) : _aiPanel.IsSpeaking ? Math.Max(0.45, combined) : 0.22;
+            for (var vi = 0; vi < _voiceWaveBars.Length; vi++)
+            {
+                var wave = 0.35 + 0.65 * Math.Abs(Math.Sin(t * 7.5 + vi * 0.62)) * voiceEnergy;
+                if (_voiceWaveBars[vi].RenderTransform is ScaleTransform vst)
+                    vst.ScaleY = Math.Clamp(wave, 0.22, 1.0);
+            }
         }
     }
 
@@ -3823,6 +4892,7 @@ public partial class MainWindow : Window
         else
         {
             _meterTimer.Stop();
+            _audioPeak = 0;
         }
     }
 
