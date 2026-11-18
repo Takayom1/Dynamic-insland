@@ -71,7 +71,7 @@ Every surface—the bar itself, the two-pane Settings window, and the system tra
 
 ## Installation & Requirements
 
-![HoshiBar Installer](docs/screenshots/installer.png)
+![HoshiBar Installer](docs/screenshots/hoshibar-installer.png)
 
 1. Download the latest **`HoshiBar-Setup-*.exe`** from [**Releases**](https://github.com/Takayom1/hoshibar/releases).
 2. Pick your starter shape and theme—the installer bundles the `.NET 8 Runtime` and the offline Russian `Vosk` speech model, can automatically set up Hoshino's updated offline neural voice on first launch, installs per-user without admin rights, and preserves your existing settings, tasks, and vault across updates.

@@ -71,7 +71,7 @@
 
 ## Установка и требования
 
-![Установщик HoshiBar](docs/screenshots/installer.png)
+![Установщик HoshiBar](docs/screenshots/hoshibar-installer.png)
 
 1. Скачайте актуальный установщик **`HoshiBar-Setup-*.exe`** в разделе [**Releases**](https://github.com/Takayom1/hoshibar/releases).
 2. Выберите стартовую форму и тему — установщик включает `.NET 8 Runtime` и русскую оффлайн-модель речи `Vosk`, при отмеченной опции автоматически подготовит обновлённый оффлайн-нейроголос Хошино при первом запуске и бережно сохранит ваши настройки, задачи и vault при обновлениях.

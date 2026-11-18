@@ -37,7 +37,11 @@ public sealed class InstallerWindow : Window
     };
     private readonly CheckBox autoVoice = new()
     {
-        Content = "Автоматически подключить нейроголос Хошино при первом запуске (офлайн RU)",
+        Content = new TextBlock
+        {
+            Text = "Автоматически установить офлайн-нейроголос Хошино при запуске",
+            TextWrapping = TextWrapping.Wrap,
+        },
         IsChecked = true,
         Margin = new Thickness(0, 10, 0, 0),
         VerticalContentAlignment = VerticalAlignment.Center,
